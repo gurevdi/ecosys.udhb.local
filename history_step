@@ -884,3 +884,7 @@ scp -r ${R}/apps/web/src/* $P\apps\web\src\
 - Деплой: нет (git push ≠ деплой на прод; SSH `ecosys` с этой машины недоступен — все ключи отклонены сервером)
 - Состояние сервера: локально OK
 - Заметки: на этой машине нет SSH-доступа к продy 94.137.47.86:35222 — деплой либо с другой машины по ГАЙД-ДЕПЛОЙ, либо добавить ключ в authorized_keys
+
+
+### 2026-09-22 21:30 — Push в github.com/gurevdi/ecosys.udhb.local
+- Что сделано: добавлен remote `gurevdi` → https://github.com/gurevdi/ecosys.udhb.local.git, `main` запушена. Remote `origin` (ravavilov) оставлен — два ремота, синхронизирую оба.
