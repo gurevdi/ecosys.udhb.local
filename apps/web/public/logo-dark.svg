@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 212 64" width="212" height="64">
+  <!-- знак: кольцо + волна -->
+  <circle cx="32" cy="32" r="30.2" fill="none" stroke="#a8832a" stroke-width="1.7"/>
+  <circle cx="32" cy="32" r="26.8" fill="none" stroke="#a8832a" stroke-width=".7" opacity=".55"/>
+  <g stroke="#1e3a5f" stroke-linecap="round" fill="none">
+    <path d="M16 27 q4 -4.5 8 0 t8 0 t8 0 t8 0" stroke-width="2.1"/>
+    <path d="M16 35 q4 -4.5 8 0 t8 0 t8 0 t8 0" stroke-width="1.6" opacity=".75"/>
+    <path d="M16 43 q4 -4.5 8 0 t8 0 t8 0 t8 0" stroke-width="1.2" opacity=".45"/>
+  </g>
+  <!-- название -->
+  <text x="74" y="30" font-family="Georgia, 'Playfair Display', 'PT Serif', serif" font-weight="700" font-size="21" fill="#1e3a5f" letter-spacing="2.5">УДХБ</text>
+  <line x1="74" y1="38" x2="188" y2="38" stroke="#a8832a" stroke-width=".8" opacity=".8"/>
+  <text x="74" y="50" font-family="Verdana, Arial, sans-serif" font-size="8.4" fill="#8a6a1d" letter-spacing="3.2">ЭКОСИСТЕМА</text>
+</svg>

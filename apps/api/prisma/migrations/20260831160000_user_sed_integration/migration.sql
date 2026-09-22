@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN "sedGroupId" TEXT;
+ALTER TABLE "User" ADD COLUMN "sedGroupName" TEXT;
+ALTER TABLE "User" ADD COLUMN "sedUserId" TEXT;
+ALTER TABLE "User" ADD COLUMN "sedLogin" TEXT;
+ALTER TABLE "User" ADD COLUMN "sedPasswordEnc" TEXT;
+ALTER TABLE "User" ADD COLUMN "sedConnectedAt" TIMESTAMP(3);
+ALTER TABLE "User" ADD COLUMN "sedLastTestAt" TIMESTAMP(3);
+ALTER TABLE "User" ADD COLUMN "sedLastTestOk" BOOLEAN;

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>А · Реестр — СЭД</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="side">
+    <a class="brand" href="dashboard.html">
+      <img class="brand-logo" src="logo.svg" alt="Экосистема УДХБ">
+    </a>
+    <nav class="side-nav">
+      <div class="side-label">Подсистемы</div>
+      <a class="side-link" href="dashboard.html"><span class="n">I.</span>Панель управления</a>
+      <a class="side-link" href="procurements.html"><span class="n">II.</span>Договоры<span class="cnt">19</span></a>
+      <a class="side-link side-link--active" href="sed.html"><span class="n">III.</span>СЭД<span class="cnt">12</span></a>
+      <a class="side-link" href="#"><span class="n">IV.</span>Календарь</a>
+      <div class="side-label">Служба</div>
+      <a class="side-link" href="users.html"><span class="n">V.</span>Пользователи</a>
+      <a class="side-link" href="settings.html"><span class="n">VI.</span>Настройки</a>
+    </nav>
+    <div class="side-foot">
+      <a class="sf-user" href="profile.html">
+        <span class="avatar">В</span>
+        <span class="sf-tx"><b>Вавилов Р. А.</b><span>Исполнитель · ОИиИБ</span></span>
+      </a>
+      <a class="sf-out" href="login.html" title="Выйти"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="dochead">
+      <div>
+        <p class="dochead-kicker">Подсистема «СЭД»</p>
+        <h1 class="dochead-title">Журнал документов</h1>
+      </div>
+      <div class="dochead-meta"><span class="meta-env">Внутренний контур</span><span class="bell">
+        <a class="bell-btn" href="notifications.html" aria-label="Уведомления"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="bell-badge">3</span></a>
+        <div class="bell-drop">
+          <div class="bell-h"><span>Уведомления · 3 новых</span><a href="notifications.html">все</a></div>
+          <a class="bell-item bell-item--new" href="#">СЭД: входящий 0241/26 от УВД — сведения по договору №14<span class="t">22.09 · 09:31</span></a>
+          <a class="bell-item bell-item--new" href="#">№18: СЗ направлена директору на подпись<span class="t">21.09 · 16:40</span></a>
+          <a class="bell-item bell-item--new" href="#">№16 «СКУД»: истёк срок приёмки<span class="t">21.09 · 11:05</span></a>
+          <a class="bell-foot" href="notifications.html">Все уведомления</a>
+        </div>
+      </span><span class="meta-user"><span class="avatar">A</span>admin</span></div>
+    </header>
+
+    <div class="page">
+      <p class="page-cap">Синхронизация с <b>sed.omskgov.ru</b> · 22.09.2026 в 09:00</p>
+      <div class="pagehead">
+        <div class="searchbox"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input class="f-input" placeholder="Поиск: номер, корреспондент, содержание документа…"></div>
+        <div class="pagehead-actions">
+          <button class="btn btn--ghost">Обновить из СЭД</button>
+        </div>
+      </div>
+
+      <div class="chips">
+        <button class="chip on">Все<span class="c">24</span></button>
+        <button class="chip">Входящие<span class="c">8</span></button>
+        <button class="chip">Исходящие<span class="c">10</span></button>
+        <button class="chip">Служебные<span class="c">6</span></button>
+        <button class="chip">На рассмотрении<span class="c">12</span></button>
+      </div>
+
+      <div class="filters">
+        <div class="fld"><label>Период</label><div class="f-range"><input class="f-input" placeholder="с 01.09"><input class="f-input" placeholder="по 30.09"></div></div>
+        <div class="fld"><label>Корреспондент</label><select class="f-select"><option>Все</option><option>УВД по Омской области</option><option>ПАО «Ростелеком»</option><option>ООО «Волна»</option><option>Внутренний</option></select></div>
+        <div class="fld"><label>Статус</label><select class="f-select"><option>Все статусы</option><option>На рассмотрении</option><option>На подписи</option><option>Исполнен</option><option>Без исполнителя</option></select></div>
+        <div class="fld"><label>Вложения</label><select class="f-select"><option>Любые</option><option>С файлами</option><option>Без файлов</option></select></div>
+        <div class="fld"><label>Сортировка</label><select class="f-select"><option>Сначала новые</option><option>Сначала старые</option><option>По номеру</option></select></div>
+        <a class="f-reset" href="#">Сбросить ×</a>
+      </div>
+
+      <div class="stats">
+        <div class="stat stat--gold"><div class="stat-v">12</div><div class="stat-l">на рассмотрении</div></div>
+        <div class="stat"><div class="stat-v">4</div><div class="stat-l">входящих</div></div>
+        <div class="stat"><div class="stat-v">5</div><div class="stat-l">исходящих</div></div>
+        <div class="stat"><div class="stat-v">3</div><div class="stat-l">служебных</div></div>
+      </div>
+
+      <table class="reg">
+        <thead><tr>
+          <th style="width:70px">Тип</th><th style="width:90px">№</th><th style="width:90px">Дата</th><th>Корреспондент</th><th>Содержание</th><th>Файлы</th><th>Статус</th>
+        </tr></thead>
+        <tbody>
+          <tr><td><span class="st st--work">вх.</span></td><td class="num">0241/26</td><td>22.09.2026</td><td><div class="name">УВД по Омской области</div></td><td>О предоставлении сведений по договору №14</td><td><span class="ftag">PDF</span></td><td><span class="st st--gold">на рассмотрении</span></td></tr>
+          <tr><td><span class="st st--work">вх.</span></td><td class="num">0239/26</td><td>21.09.2026</td><td><div class="name">ПАО «Ростелеком»</div></td><td>Счёт на оплату по договору ОКС-2025</td><td><span class="ftag">PDF</span> <span class="ftag">XLSX</span></td><td><span class="st st--gold">на рассмотрении</span></td></tr>
+          <tr><td><span class="st st--muted">сз</span></td><td class="num">18-СЗ</td><td>20.09.2026</td><td><div class="name">Внутренний</div></td><td>СЗ по закупке №18 «Поставка серверного оборудования»</td><td><span class="ftag">DOCX</span></td><td><span class="st st--work">на подписи</span></td></tr>
+          <tr class="row-danger"><td><span class="st st--muted">сз</span></td><td class="num">16-СЗ</td><td>18.09.2026</td><td><div class="name">Внутренний</div></td><td>Продление срока приёмки по №16 «СКУД»</td><td><span class="ftag">DOCX</span></td><td><span class="st st--danger">без исполнителя</span></td></tr>
+          <tr><td><span class="st st--work">исх.</span></td><td class="num">0157/26</td><td>17.09.2026</td><td><div class="name">АО «Сфера»</div></td><td>Уведомление о нарушении сроков приёмки</td><td><span class="ftag">PDF</span></td><td><span class="st st--ok">исполнен</span></td></tr>
+          <tr><td><span class="st st--work">вх.</span></td><td class="num">0231/26</td><td>15.09.2026</td><td><div class="name">ООО «Волна»</div></td><td>Акт выполненных работ, этап 2 — №15</td><td><span class="ftag">PDF</span> <span class="ftag">PDF</span></td><td><span class="st st--ok">исполнен</span></td></tr>
+          <tr class="row-danger"><td><span class="st st--muted">сз</span></td><td class="num">15-СЗ</td><td>12.09.2026</td><td><div class="name">Внутренний</div></td><td>Назначение ответственного по договору №14</td><td>—</td><td><span class="st st--danger">без исполнителя</span></td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td colspan="6">Итого на странице — 7 документов</td><td></td></tr>
+        </tfoot>
+      </table>
+      <div class="regfoot"><span>Строки 1–7 из 24 · синхронизировано 22.09.2026 в 09:00</span><a href="#">Следующая страница →</a></div>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экосистема УДХБ — варианты дизайна</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Inter", system-ui, sans-serif; background: #16304d; color: #e8edf4; min-height: 100vh; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 56px 24px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px; color: #fff; }
+  .sub { color: #9db0c6; margin-bottom: 40px; font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+  .v--pick { border-color: rgba(212,175,55,.5); }
+  .v {
+    background: #0f2136; border: 1px solid rgba(255,255,255,.09); border-radius: 14px;
+    padding: 24px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .v h2 { margin: 0; font-size: 20px; color: #d4af37; }
+  .v p { margin: 0; font-size: 13.5px; color: #b9c6d6; line-height: 1.55; }
+  .v ul { margin: 0; padding-left: 18px; font-size: 13px; color: #b9c6d6; line-height: 1.7; }
+  .links { display: flex; gap: 10px; margin-top: auto; padding-top: 10px; }
+  .links a {
+    flex: 1; text-align: center; padding: 10px; border-radius: 8px;
+    background: #d4af37; color: #1a1405; font-weight: 700; font-size: 13px; text-decoration: none;
+  }
+  .links a.ghost { background: transparent; border: 1px solid rgba(255,255,255,.2); color: #dce4ee; }
+  .links a:hover { filter: brightness(1.08); }
+  .tag { display: inline-block; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: #8ea0b5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Редизайн «Экосистемы УДХБ»</h1>
+  <p class="sub">Рабочее направление — вариант А «Реестр», доработан по всем страницам. Остальные варианты сохранены для сравнения.</p>
+
+  <div class="grid">
+    <div class="v v--pick">
+      <span class="tag">Вариант А — рабочий</span>
+      <h2>«Реестр»</h2>
+      <p>Документальный стиль: интерфейс читается как официальная выписка из реестра. Светлый сайдбар, serif-заголовки (PT Serif), волосяные линии, золото как «печать».</p>
+      <ul>
+        <li>«Выписка из реестра» в шапке, двойная линия</li>
+        <li>Блок «К исполнению» со штампом</li>
+        <li>Шкала этапа ■■◆□□ в таблицах, итоговая строка</li>
+        <li>Папки — оглавление, пользователь — «Исполнитель»</li>
+      </ul>
+      <div class="links">
+        <a href="a/dashboard.html">Дашборд</a>
+        <a class="ghost" href="a/procurements.html">Реестр</a>
+        <a class="ghost" href="a/procurement.html">Договор</a>
+      </div>
+      <div class="links">
+        <a class="ghost" href="a/sed.html">СЭД</a>
+        <a class="ghost" href="a/users.html">Пользователи</a>
+        <a class="ghost" href="a/settings.html">Настройки</a>
+      </div>
+      <div class="links">
+        <a class="ghost" href="a/profile.html">Профиль</a>
+        <a class="ghost" href="a/notifications.html">Уведомления</a>
+        <a class="ghost" href="a/login.html">Вход</a>
+      </div>
+    </div>
+
+  </div>
+  <p class="sub" style="margin-top:24px">Варианты Б, В, Д удалены — работаем над А. <a href="a/logo-variants.html" style="color:#d4af37">Выбор знака логотипа →</a></p>
+</div>
+</body>
+</html>

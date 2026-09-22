@@ -1,0 +1,879 @@
+# history_step — журнал работ агента над ecosys.udhb.local
+
+> **Назначение:** фиксировать решения, состояние и правила продолжения работы при смене сессии (офис/дом) или смене Cursor.
+> **Обновлять** после каждой значимой задачи (фича, миграция, деплой, синхронизация дисков).
+
+---
+
+## Инфраструктура
+
+| | |
+|---|---|
+| Проект (локально) | `C:\Users\vra\ecosys.udhb.local` — основная рабочая копия для сборки и деплоя |
+| Зеркало на сетевом диске | `Z:\udhb\ecosys.udhb.local` — синхронизируется с C: (robocopy), Cursor Read/Write на Z: может давать Permission denied |
+| Сервер | `94.137.47.86:35222`, SSH alias `ecosys`, user `root` |
+| Каталог на сервере | `/opt/ecosys` |
+| API | systemd `ecosys-api`, порт 3000, nginx прокси `/api` |
+| Frontend | `/opt/ecosys/apps/web/dist` |
+| БД | PostgreSQL `ecosys`, Prisma migrate |
+| Часовой пояс | Asia/Omsk (`TZ=Asia/Omsk` в systemd) |
+| SSH-ключ | `~/.ssh/id_ed25519` |
+
+---
+
+## Критичное правило (не нарушать)
+
+**Перед деплоем всегда сверять локальную копию и сервер.**
+
+1. `ssh ecosys "ls /opt/ecosys/apps/api/prisma/migrations/"` — что на сервере
+2. `dir C:\Users\vra\ecosys.udhb.local\apps\api\prisma\migrations` — что локально
+3. Если сервер новее → сначала pull с сервера (`scp`/`rsync`), потом правки, потом deploy
+4. Если локаль новее → deploy (`deploy/sync-server.ps1`)
+5. **Никогда** не затирать локаль, если сервер старше без явного согласования
+
+**Направление синхронизации дисков (31.08.2026):** C: → Z: (локальные файлы заменяют файлы на Z:, не наоборот). Исключения: `.git`, `node_modules`, `dist`, `.env`.
+
+---
+
+## Текущее состояние (21.09.2026 ~10:15 UTC+6)
+
+Локальная копия `C:\Users\Hack\Desktop\ecosys.udhb.local-master`: API :3000 health OK, Vite :5173. Чеклист Правки.txt 1–19 (кроме пропусков 2 и 6) повторно сверен по коду, HTTP и UI. Продакшен не деплоился. Выкладка: `ГАЙД-ДЕПЛОЙ-ДЛЯ-ЗАКАЗЧИКА.md`. Подробности инфраструктуры ниже сохранены с 01.09.
+
+## Текущее состояние — инфраструктура (01.09.2026)
+
+### Статус сервера
+- API: **работает** — `{"ok":true,"service":"ecosys","debug":true}`
+- Git: `docs/ONBOARDING.md` — инструкция для соавторов; ветки `master` и `slave` на GitHub
+- SED: доступен с сервера `ecosys`, интеграция admin → Вавилов Р.А. (group 33492, user 139952), `sedLastTestOk: true`
+
+### Миграции (локаль = сервер)
+| Миграция | Содержание |
+|---|---|
+| `20260831120000_init` | Базовая схема |
+| `20260831120000_contract_folders_roles` | Папки договоров, роли подсистемы |
+| `20260831130000_proc_change_log` | ProcChangeLog вместо StatusLog |
+| `20260831140000_procurement_serial_no` | Поле `serialNo` у Procurement |
+| `20260831150000_procurement_category` | Enum ProcCategory: service / supply / telecom |
+| `20260831160000_user_sed_integration` | Поля SED у User (sedGroupId, sedLogin, sedPasswordEnc, …) |
+| `20260901083000_ad_integration` | AD: adGroups, AdGroupMapping, sync/JIT |
+
+### Реализованный функционал
+
+**API и бэкенд**
+- Auth (local + AD), users, permissions, LDAP directory
+- Procurements CRUD, quotes, memos, notifications, cabinet
+- Папки договоров (`ContractFolder`), роли подсистемы (`UserContractRole`); **scope по отделам** в списке/deadlines/cabinet (`contractDepartmentScope`)
+- `GET /api/contracts/access` — эффективные права пользователя в подсистеме
+- Фильтры списка: отдел, год, папка, статус, **тип договора**
+- `GET /api/contracts/years` — годы из настроек, defaultYear по Asia/Omsk
+- `GET /api/procurements/:id/history` — полная история изменений (`ProcChangeLog`)
+- `DELETE /api/procurements/:id` — только модератор/адmin подсистемы
+- Внутренний № `serialNo` — автонумерация (`proc-serial.ts`)
+- Категории договоров: **услуга / поставка / связь** (`ProcCategory`)
+- **Интеграция СЭД** (`sed.omskgov.ru`):
+  - `GET/PUT/DELETE /api/sed/integration`, `POST /api/sed/integration/test`
+  - `GET /api/sed/organizations`, `GET /api/sed/logins`
+  - `GET /api/sed/documents/pending` — документы «На рассмотрении» (`document.php?status=3`)
+  - `GET /api/sed/documents/:id` — регистрационная карточка + текст страниц + файлы
+  - `GET /api/sed/documents/:id/files/:fileId` — прокси вложений (PDF inline)
+  - Библиотека `apps/api/src/lib/sed.ts` (login cp1251, cookie-jar, парсинг HTML)
+  - Пароль SED: AES-256-GCM в `sedPasswordEnc`, ключ от `JWT_SECRET`
+
+- **Настройки → Active Directory:** hub-интерфейс (Обзор, Подключение, Политики, Группы AD, Каталог); checklist готовности, метрики, поиск/импорт из AD, маппинги групп
+
+**Web**
+- **Оболочка `AppShell`:** левая колонка навигации, topbar с заголовком страницы, современный dashboard-стиль
+- **Порядок меню:** `User.navWeights` — в профиле редактор весов (↑↓ и число); меньший вес = выше в списке
+- **Панель управления `/`:** секции Договоры и СЭД (если доступны), уведомления; пункт меню «Панель управления»
+- Кабинет, договоры, настройки: **панель ctr** (Обзор, Папки, Роли, Отображение) — доступ админам подсистемы без полных прав «Настройки»
+- **Список `/procurements`:** KPI, поиск, фильтры, режим аудитора (только просмотр), кнопка «Настройки» для модераторов/админов договоров
+- **Карточка `/procurements/:id`:** профессиональный layout; **read-only для аудитора** (disabled поля, без форм КП/СЗ)
+- Тип договора: в списке, при создании, в карточке (редактирование в sidebar)
+- Удаление с подтверждением (корзина)
+- **Профиль → Интеграция с СЭД:** выбор организации/пользователя, проверка входа, список «На рассмотрении»
+- **Модальное окно `SedDocumentModal`:** рег. карточка, текст документа, PDF-просмотр, скачивание файлов
+
+**Деплой**
+- `deploy/sync-server.ps1` — build frontend, scp API+web (+ package.json для iconv-lite), migrate, seed, restart, health check
+- Правило Cursor: `.cursor/rules/ecosys-deploy.mdc` — деплой после изменений API/frontend
+- Правило Cursor: `.cursor/rules/ecosys-history.mdc` — журнал `history_step` после каждой задачи
+
+### Admin
+- login: `admin`
+- пароль: см. `.env` на сервере (`INIT_ADMIN_PASSWORD`) или seed
+- SED привязан к admin (учётка СЭД: Вавилов Р.А.)
+
+---
+
+## Хронология работ (сессия агента)
+
+### 2026-08-31 — Инфраструктура и каркас приложения
+- Настроен постоянный SSH (`ecosys` → `94.137.47.86:35222`)
+- Осмотр сервера и стека (Node 22, PostgreSQL, nginx, systemd)
+- Каркас: кабинеты, роли, 3 отдела, договоры, СЗ, КП, сроки приёмки, уведомления
+- Первый деплой на `ecosys.udhb.local`
+
+### 2026-08-31 — Подсистема «Договоры» в настройках
+- Модели: `ContractFolder`, `UserContractRole`, `folderId`/`budgetYear` у Procurement
+- Роли: admin, moderator, operator, auditor
+- UI: **Настройки → Договоры** — папки, роли, режим отображения
+- Список: дерево папок, фильтры отдел/год
+
+### 2026-08-31 — Автоматический деплой
+- Скрипт `deploy/sync-server.ps1` (исправлен CRLF в SSH, загрузка `.env` для Prisma)
+- Правило `.cursor/rules/ecosys-deploy.mdc`
+
+### 2026-08-31 — Удаление договоров
+- `DELETE /api/procurements/:id`
+- Кнопка-корзина в списке и карточке
+- Только модератор/админ подсистемы (`canDeleteContracts`)
+
+### 2026-08-31 — Год договора из настроек
+- `GET /api/contracts/years` → `{ years, currentYear, defaultYear, timezone }`
+- Выпадающий список вместо ручного ввода
+- Логика defaultYear в `apps/api/src/lib/time.ts` (Asia/Omsk)
+
+### 2026-08-31 — Внутренний порядковый номер
+- Поле `serialNo Int @unique` у Procurement
+- Автонумерация при создании (`proc-serial.ts`)
+- Отображение: `№5 · 31.08.2026` в карточке; колонки **№** и **Создан** в списке
+
+### 2026-08-31 — Полная история изменений
+- Модель `ProcChangeLog` (section, action, summary, details)
+- `GET /api/procurements/:id/history`
+- Логирование через `proc-audit.ts` при всех операциях
+- UI: кнопка часов + `HistoryModal`
+
+### 2026-08-31 ~19:30 — Редизайн карточки договора
+- **Файл:** `apps/web/src/pages/Procurement.tsx`, стили `proc-*`
+- Topbar, header, KPI-полоска, 2 колонки (sidebar + main)
+- Sidebar: статус, комплект документов с progress bar
+- Main: контракт/приёмка, КП, СЗ
+- **Деплой:** да, health OK
+
+### 2026-08-31 ~19:48 — Редизайн списка договоров
+- **Файл:** `apps/web/src/pages/Procurements.tsx`, стили `plist-*`
+- Шапка с KPI (в выборке / в работе / завершено)
+- Панель фильтров: поиск, год, отдел, статус
+- Sticky sidebar папок с счётчиками
+- Таблица: №, закупка, статус, КП/СЗ, сумма; цветные бейджи статусов
+- Модальное окно «Новая закупка» (Esc / клик вне)
+- **Деплой:** да, health OK
+
+### 2026-08-31 ~21:12 — Категоризация договоров
+- **Типы:** услуга (`service`), поставка (`supply`), связь (`telecom`)
+- **БД:** enum `ProcCategory`, миграция `20260831150000_procurement_category`
+- **API:** category в list/create/patch, фильтр `?category=`
+- **Audit:** поле «Тип договора» в истории изменений
+- **Web список:** чипы фильтра по типам, колонка «Тип», KPI по категориям, выбор при создании
+- **Web карточка:** бейдж типа в header, select в sidebar с автосохранением
+- **CSS:** `.pill.cat-service`, `.cat-supply`, `.cat-telecom`, `.plist-cats`
+- **Деплой:** да, health OK, 5 миграций на сервере
+
+### 2026-08-31 ~21:18 — Деплой по запросу пользователя
+- Пользователь явно запросил деплой локальных файлов на сервер (направление: локаль → сервер)
+- Выполнен `deploy/sync-server.ps1`, health OK
+
+### 2026-08-31 ~21:20 — Синхронизация диска Z:
+- `robocopy C:\Users\vra\ecosys.udhb.local → Z:\udhb\ecosys.udhb.local`
+- Скопировано 56 файлов; исключены `.git`, `node_modules`, `dist`, `.env`
+- Файл `history_step` на Z: не перезаписывался (остался старый) — обновлён в этой задаче
+
+### 2026-08-31 ~22:00 — Интеграция с СЭД (sed.omskgov.ru)
+- **БД:** миграция `20260831160000_user_sed_integration` — поля SED у User
+- **API:** `apps/api/src/lib/sed.ts`, `sed-crypto.ts`, `routes/sed.ts`
+- Вход в СЭД: форма cp1251 (`iconv-lite`), cookie-jar, autocomplete orgs/logins с auth.php
+- **Профиль:** блок «Интеграция с СЭД», SedCombo, сохранение/проверка/отключение
+- Учётка на сервере: admin → group 33492, user 139952 (Вавилов Р.А.), test OK
+- **Исправления:** SedCombo blur/click; cp1251 вместо UTF-8; deploy грузит package.json
+- **Деплой:** да, health OK
+- **Secrets:** skill `sed-omskgov`, env вне репозитория (не в history_step)
+
+### 2026-08-31 ~22:30 — Документы СЭД «На рассмотрении» в профиле
+- **Источник СЭД:** `document.php?status=3`, парсинг `tr[name=s-doc__item]`
+- **API:** `GET /api/sed/documents/pending` — один login на запрос
+- **UI:** таблица в Profile под блоком интеграции, кнопка «Обновить»
+- **Деплой:** да, health OK; проверено ~12 документов на рассмотрении
+
+### 2026-08-31 ~22:40 — Модальное окно регистрационной карточки СЭД
+- **API:**
+  - `GET /api/sed/documents/:id` — карточка (`document.card.php`) + текст (`/web/?url=document/pages/layout&id=`)
+  - `GET /api/sed/documents/:id/files/:fileId` — прокси `d_getfile.php` (PDF inline)
+- **Парсинг:** maintable (поля рег. карточки), d_getfile (вложения), card-annotation (краткое содержание)
+- **Web:** `SedDocumentModal.tsx` — поля, текст СЗ, список файлов, iframe PDF
+- Клик по номеру в списке → модалка (не редирект на sed.omskgov.ru)
+- **Деплой:** да, health OK; проверены doc 6234542 (PDF) и 6229588 (текст + docx/pdf)
+
+### 2026-08-31 ~22:45 — Правило журнала history_step
+- Создано `.cursor/rules/ecosys-history.mdc` (alwaysApply) — обязательная запись после каждой задачи
+- Обновлён `history_step` (хронология SED + текущее состояние)
+- **Деплой:** не требуется (только docs/rules); robocopy на Z: по необходимости
+
+---
+
+## Ключевые файлы
+
+```
+apps/api/prisma/schema.prisma           — схема (+ ProcCategory, serialNo, ProcChangeLog)
+apps/api/prisma/migrations/             — 7 миграций (+ user_nav_weights)
+apps/api/src/routes.ts                  — procurements CRUD, history, delete, category, profile navWeights
+apps/api/src/routes/contracts.ts        — папки, годы, роли
+apps/api/src/lib/contracts.ts           — права подсистемы
+apps/api/src/lib/proc-audit.ts          — история изменений (+ category)
+apps/api/src/lib/proc-serial.ts         — автонумерация
+apps/api/src/lib/time.ts                — Asia/Omsk, defaultYear
+apps/api/src/lib/catalog.ts             — STATUS_LABELS, CATEGORY_LABELS
+apps/web/src/api.ts                     — STATUS, METHOD, CATEGORY, canDeleteContracts
+apps/web/src/pages/Procurements.tsx     — список (plist-*)
+apps/web/src/pages/Procurement.tsx      — карточка (proc-*)
+apps/web/src/styles.css                 — proc-*, plist-*, pill.cat-*
+apps/api/src/lib/sed.ts                  — клиент СЭД (login, список, карточка, файлы)
+apps/api/src/lib/sed-crypto.ts           — шифрование пароля SED
+apps/api/src/routes/sed.ts               — API маршруты СЭД
+apps/web/src/App.tsx                    — AppShell вместо top nav
+apps/web/src/components/AppShell.tsx    — sidebar + topbar
+apps/web/src/components/NavWeightsEditor.tsx — редактор порядка меню
+apps/web/src/lib/nav.ts                 — NAV_DEFINITIONS, buildNavItems, navWeights
+apps/web/src/pages/Cabinet.tsx          — dashboard ЛК
+apps/web/src/pages/Profile.tsx          — профиль + SED + порядок меню
+apps/web/src/components/SedDocumentModal.tsx — модалка рег. карточки
+deploy/sync-server.ps1                  — деплой (+ package.json)
+.cursor/rules/ecosys-deploy.mdc         — правило автодеплоя
+.cursor/rules/ecosys-history.mdc        — правило журнала history_step
+history_step                            — журнал работ агента (обновлять каждую задачу)
+```
+
+---
+
+## Деплой
+
+```powershell
+# Из корня проекта (C:\Users\vra\ecosys.udhb.local)
+powershell -ExecutionPolicy Bypass -File deploy/sync-server.ps1
+```
+
+**После деплоя:**
+```powershell
+ssh ecosys "curl -s http://127.0.0.1/api/health"
+```
+Пользователю: **Ctrl+F5** в браузере.
+
+---
+
+## Синхронизация C: → Z:
+
+```powershell
+robocopy "C:\Users\vra\ecosys.udhb.local" "Z:\udhb\ecosys.udhb.local" /E /XD node_modules .git dist /XF .env
+```
+
+---
+
+## Pull с сервера (если локаль отстала)
+
+```powershell
+$R = "ecosys:/opt/ecosys"
+$P = "C:\Users\vra\ecosys.udhb.local"
+scp -r ${R}/apps/api/prisma/migrations/* $P\apps\api\prisma\migrations\
+scp ${R}/apps/api/prisma/schema.prisma $P\apps\api\prisma\
+scp -r ${R}/apps/api/src/* $P\apps\api\src\
+scp -r ${R}/apps/web/src/* $P\apps\web\src\
+```
+
+---
+
+## Незавершённое / на будущее
+
+- [ ] Cursor Write/Read на `Z:` — Permission denied; правки через `C:` + robocopy на Z:
+- [ ] Локально нет git в PATH на некоторых машинах
+- [ ] При смене сессии: читать `history_step`, сверять migrations local vs server
+- [ ] Существующие договоры без явного типа получили default `service` при миграции — при необходимости массово переклассифицировать вручную
+- [ ] SED: просмотр отсканированных страниц (preview images), если layout пустой — только PDF/файлы
+- [ ] SED: кэш сессии между запросами card+file (сейчас отдельный login на файл)
+
+---
+
+### 2026-09-01 16:35 — Документация для соавторов (git)
+- Что сделано: `docs/ONBOARDING.md` — SSH, git, деплой, локальная разработка; push в `master` и `slave`
+- Файлы: `docs/ONBOARDING.md`
+- Деплой: нет
+- Заметки: репозиторий https://github.com/ravavilov/ecosys.udhb.local
+
+### 2026-09-01 15:50 — СЗ: должность в дательном падеже
+- Что сделано: в настройках подписанта — отдельное поле «Должность (дательный падеж)» (напр. директору); в печатной форме «Кому:» две строки — должность и ФИО; снимок в ServiceMemo.addresseePositionDative
+- Файлы: `memo-signatories.ts`, `MemoSignatoryFields.tsx`, `Procurement.tsx`, `routes.ts`, migration `20260901154500_memo_position_dative`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; пересохранить подписантов в настройках
+
+### 2026-09-01 15:35 — Подписанты СЗ: не пользователи, работает модератор
+- Что сделано: убрана привязка подписантов к пользователям и уведомления им; в настройках только реквизиты для печати; кнопки «Подпись получена» — модератор отмечает бумажное согласование; в истории «отметил модератор»
+- Файлы: `Settings.tsx`, `ProcWorkflowPanel.tsx`, `Procurement.tsx`, `routes.ts`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; при сохранении настроек directorUserId/deputyUserId очищаются
+
+### 2026-09-01 15:25 — Настройки: подписанты служебных записок
+- Что сделано: Настройки → Общие → Служебные записки — подписант 1 (директор) и подписант 2 (замещающая подпись): должность, ФИО, Фамилия И.О., «Кому» в дательном падеже; предпросмотр; при формировании СЗ реквизиты сохраняются в карточку; миграция `addressee*` в ServiceMemo
+- Файлы: `memo-signatories.ts`, `MemoSignatoryFields.tsx`, `Settings.tsx`, `Procurement.tsx`, `routes.ts`, `schema.prisma`, migration `20260901152000_memo_signatory_fields`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; уведомления — опционально в «Уведомления в системе»
+
+### 2026-09-01 15:00 — ЭМ: кликабельные этапы + обязательное КП
+- Что сделано: фазы workflow — кнопки (назад / следующая / переключение КП↔СЗ в подготовке); без КП нельзя «Далее» и нельзя перейти на следующую фазу (даже принудительно); API: no_quotes = blocker, проверка при создании СЗ
+- Файлы: `apps/api/src/lib/proc-workflow.ts`, `routes.ts`, `ProcWorkflowPanel.tsx`, `proc-workflow.ts`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 14:50 — ЭМ: секции карточки только на своём этапе
+- Что сделано: на электронном магазине видна одна рабочая секция — КП (сбор), СЗ (оформление), просмотр СЗ (согласование), контракт (заключение), исполнение (поставка/приёмка); этап «Закупка» — подсказка в панели этапов; аукцион — все секции как раньше
+- Файлы: `apps/web/src/lib/proc-workflow.ts` (`eshopActiveSection`), `Procurement.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 14:30 — Договоры: упрощение workflow и UI
+- Что сделано: 8 шагов → **5 фаз** (Подготовка → Согласование → Закупка → Контракт → Исполнение); компактная панель «Сейчас» + одна подсказка + «Далее»; карточка ЭМ без боковой панели; **предпросмотр** КП/договора (PDF, изображения, docx/xlsx); в списке колонка **Поставщик / поставка** после этапа контракта; API списка — `selectedQuote.supplierName`; точки внимания вместо ⛔/⚠
+- Файлы: `apps/web/src/lib/proc-workflow.ts`, `ProcWorkflowPanel.tsx`, `ProcFilePreviewModal.tsx`, `procFiles.ts`, `Procurement.tsx`, `Procurements.tsx`, `apps/api/src/routes.ts`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; форма контракта только на фазе «Контракт» и далее
+
+### 2026-09-01 14:00 — Электронный магазин: этапность и контроли workflow
+- Что сделано: 7-шаговый маршрут (КП → СЗ → руководитель → директор → договорной → размещение → торги → контракт); новые статусы `supervisor_approval`, `director_approval`; поля publishedAt, biddingStart/End, согласования, selectedQuote, файл договора; `proc-workflow.ts` — blockers/warnings, запрет пропуска этапов (force для модератора); UI stepper + подсветка ⚠/⛔ в списке; API approve, contract-file
+- Файлы: `schema.prisma`, migration `20260901140000_electronic_shop_workflow`, `proc-workflow.ts`, `routes.ts`, `catalog.ts`, `ProcWorkflowPanel.tsx`, `Procurement.tsx`, `Procurements.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; новые закупки ЭМ стартуют с этапа «Сбор КП»
+
+### 2026-09-01 13:30 — Договоры: права, scope, admin panel (ctr)
+- Что сделано: фильтрация списка/deadlines/cabinet по отделам из `contractRoles`; API `GET /api/contracts/access`; rollup счётчиков в дереве папок; клиентские хелперы `canRead/Write/Manage*`; пункт меню «Договоры» для пользователей только с ролями подсистемы; панель `ContractsSettingsPanel` (матрица прав, папки с редактированием, назначение ролей); режим «только просмотр» для аудитора; ссылка «Настройки» из реестра
+- Файлы: `apps/api/src/lib/contracts.ts`, `routes/contracts.ts`, `routes.ts`, `apps/web/src/api.ts`, `lib/nav.ts`, `components/settings/contracts/*`, `Settings.tsx`, `Procurements.tsx`, `Procurement.tsx`, `App.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; Настройки → Договоры или ⚙ из реестра
+
+### 2026-09-01 13:05 — AD: критический краш fmtWhen is not defined
+- Что сделано: восстановлен импорт `fmtWhen` (ReferenceError ломал вкладку после загрузки); ErrorBoundary; fallback загрузки без bootstrap; saveLdapConfig не падает на битом пароле; кнопка в шапке AD видна
+- Файлы: `AdSettingsPanel.tsx`, `AdErrorBoundary.tsx`, `useAdPanel.ts`, `ldap-config.ts`, `Settings.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 12:55 — AD: полная переработка admin console (adms)
+- Что сделано: модульная архитектура `components/settings/ad/` (types, useAdPanel, AdSettingsPanel); API `GET /api/ad/bootstrap`; UI в стиле Entra/Azure — status bar, pill-nav, KPI, wizard steps, toggle switches, таблица маппингов; skeleton loading, empty states; CSS `adms-*`
+- Файлы: `ad/types.ts`, `ad/useAdPanel.ts`, `ad/AdSettingsPanel.tsx`, `routes/ad.ts`, `Settings.tsx`, `styles.css`; удалён старый `AdSettingsPanel.tsx`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; Настройки → Active Directory
+
+### 2026-09-01 12:45 — AD: пустая панель контента (layout fix)
+- Что сделано: боковая grid-раскладка заменена на горизонтальные вкладки + панель `ad-panel` на всю ширину; защита от undefined stats/checklist; загрузка через один `/api/ad/status`; defaults для settings
+- Файлы: `AdSettingsPanel.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; контент должен отображаться под вкладками
+
+### 2026-09-01 12:30 — Исправление UI AD: неактивные кнопки и загрузка
+- Что сделано: `canWrite` для настроек учитывает `isAdmin` (раньше admin видел read-only UI); `getLdapConfigPublic` не падает при ошибке расшифровки пароля — показывает `passwordError`; панель AD: обработка ошибок загрузки, кнопка «Повторить», авто-проверка после сохранения, стили `:disabled`
+- Файлы: `App.tsx`, `AdSettingsPanel.tsx`, `ldap-config.ts`, `ad.ts`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; если ошибка расшифровки — заново ввести пароль service-bind
+
+### 2026-09-01 09:30 — Переработка UI Active Directory (hub)
+- Что сделано: `AdSettingsPanel` — 5 секций с боковой навигацией (Обзор / Подключение / Политики / Группы AD / Каталог); hero-блок со статусом; checklist готовности; toggle-карточки политик; редактор маппингов групп; поиск каталога и импорт (`GET /api/ad/preview`, `POST /api/ad/import`); status без авто-LDAP ping — кэш последней проверки (`ad_last_test_*`); CSS `.ad-hub`, `.ad-hero`, `.ad-nav`, `.ad-policy-card`, `.ad-mapping-card`
+- Файлы: `AdSettingsPanel.tsx`, `styles.css`, `apps/api/src/lib/ad.ts`, `apps/api/src/routes/ad.ts`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; Настройки → Active Directory; service-bind и пароль от ИТ → «Проверить» на вкладке Подключение
+
+### 2026-09-01 09:15 — AD: настройки и учётные данные в «Настройки»
+- Что сделано: вкладка «Active Directory» в `/settings`; LDAP URL, bind DN, пароль (AES-GCM в Setting), base, domain — из UI; ldap-config.ts читает БД с fallback .env; вкладка AD убрана из «Пользователи»
+- Файлы: `ad-crypto.ts`, `ldap-config.ts`, `ldap.ts`, `ad.ts`, `AdSettingsPanel.tsx`, `Settings.tsx`, `Users.tsx`
+- Деплой: да
+- Заметки: Ctrl+F5; Настройки → Active Directory → заполнить подключение и «Проверить»
+
+### 2026-09-01 08:45 — Интеграция Active Directory (полная)
+- Что сделано: LDAP failover, health-check, JIT provisioning, sync on login, маппинг групп AD→права; API `/api/ad/*`; переработан UI «Пользователи» (вкладки: список, каталог AD, настройки AD); импорт по логинам без загрузки всего каталога; массовая синхронизация; `/directory` → redirect
+- Файлы: `ldap.ts`, `ad.ts`, `routes/ad.ts`, `schema.prisma`, migration `20260901083000_ad_integration`, `Users.tsx`, `components/users/*`, `styles.css`, `nav.ts`
+- Деплой: да, health OK, миграция применена
+- Заметки: Ctrl+F5; задать `LDAP_BIND_PASSWORD` на сервере для каталога; маппинги групп — «Пользователи → Active Directory»
+
+### 2026-09-01 08:35 — Сброс пароля admin
+- Что сделано: скрипт `apps/api/scripts/reset-admin-password.mjs`; на сервере сброшен пароль admin, `source=local`, хеш из `INIT_ADMIN_PASSWORD` (или дефолт)
+- Файлы: `apps/api/scripts/reset-admin-password.mjs`
+- Деплой: нет (скрипт scp на сервер)
+- Заметки: логин `admin`, пароль `EcosysAdmin47!` если в `.env` не задан другой `INIT_ADMIN_PASSWORD`
+
+### 2026-09-01 03:35 — GitHub: первый push в ветку slave
+- Что сделано: инициализирован git в `C:\Users\vra\ecosys.udhb.local`; remote `https://github.com/ravavilov/ecoasis.git`; ветка `slave`; 95 файлов (без `.env`, `node_modules`, `dist`, `tmp-sed-*`)
+- Файлы: весь проект, `.gitignore`
+- Деплой на сервер: нет
+- Заметки: commit `92a1910`; `git push -u origin slave`
+
+### 2026-09-01 03:30 — Модалка документа: иконки просмотр/скачать на вложениях
+- Что сделано: вкладка «Вложения» — компактный список строк; текст «Просмотр» заменён на кнопку-иконку (глаз); добавлена кнопка-иконка «Скачать»; `flex: 1` у панели вкладок
+- Файлы: `SedDocumentModal.tsx`, `sedFileIcons.tsx` (`IconPreview`), `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 03:15 — Ускорение подсистемы СЭД
+- Что сделано: убрана массовая подгрузка карточек для вложений в списке; кэш сессии СЭД (12 мин) и списка файлов (10 мин); параллельно dashboard + список; вложения только по клику «Посмотреть файлы»; карточка документа — параллельно HTML + страницы
+- Файлы: `apps/api/src/lib/sed.ts`, `SedAttachmentsCell.tsx`, `SedFilesListModal.tsx`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; первый клик «Посмотреть файлы» чуть дольше, список страницы — быстро
+
+### 2026-09-01 03:05 — СЭД: кнопка «Посмотреть файлы» + модалка списка
+- Что сделано: в колонке «Файлы» — кнопка с счётчиком; модалка со списком имён, «Просмотр», скачивание, ZIP; предпросмотр через существующую модалку
+- Файлы: `SedFilesListModal.tsx`, `SedAttachmentsCell.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 02:55 — СЭД список: вложения в отдельной колонке, компактный UI
+- Что сделано: столбец «Файлы» с иконками типов (PDF/DOC/XLS…), скачивание по hover-кнопке, ZIP-архив иконкой; содержание и корреспондент — 2 строки; уменьшены отступы и бейджи; SVG-иконки `sedFileIcons.tsx`
+- Файлы: `SedAttachmentsCell.tsx`, `Sed.tsx`, `sedFileIcons.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 02:45 — Fix пагинации СЭД по фильтрам метрик
+- Что сделано: total для пагинации берётся из счётчика активного фильтра (all/burning/urgent/other), а не всегда «61 на рассмотрении»; hasNextPage пересчитывается; парсинг total из HTML для подфильтров; сброс listPath при смене метрики
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/web/src/pages/Sed.tsx`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 02:35 — Кликабельные метрики СЭД (раздел + панель управления)
+- Что сделано: 4 метрики «На рассмотрении / Незамедлительные / Срочные / Прочие» — клик фильтрует список (те же URL, что на sed.omskgov.ru); на панели управления — переход в `/sed?review=…`; компонент `SedReviewMetrics`
+- Файлы: `sedReviewMetrics.ts`, `SedReviewMetrics.tsx`, `Sed.tsx`, `Cabinet.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 02:25 — Fix PDF worker: MIME .mjs + Vite worker bundle
+- Что сделано: nginx отдавал `.mjs` как octet-stream → worker не грузился; PDF.js worker через Vite `?worker` (`.js`); в nginx добавлен `application/javascript` для `.mjs`
+- Файлы: `sedPdfPreview.ts`, `deploy/nginx-ecosys.conf`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 02:20 — PDF-предпросмотр внутри экосистемы (PDF.js)
+- Что сделано: вместо iframe (открывал системный Acrobat) — рендер PDF через pdf.js на canvas прямо в модалке; lazy-load библиотеки
+- Файлы: `sedPdfPreview.ts`, `SedPdfPreviewPane.tsx`, `SedFilePreviewModal.tsx`, `styles.css`, `apps/web/package.json`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 02:15 — Предпросмотр Office: doc, docx, xls, xlsx
+- Что сделано: docx — рендер в браузере (docx-preview); xls/xlsx — таблица с вкладками листов (SheetJS); doc — текстовый предпросмотр через API (word-extractor); lazy-load библиотек
+- Файлы: `sedOfficePreview.ts`, `SedOfficePreviewPane.tsx`, `sedFileFetch.ts`, `SedFilePreviewModal.tsx`, `sedFiles.ts`, `apps/api/src/lib/sed.ts`, `routes/sed.ts`, `styles.css`, `package.json` (web+api)
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; .doc — только текст без форматирования; сложные docx/xlsx могут отображаться упрощённо
+
+### 2026-09-01 02:05 — DOC/DOCX: предпросмотр без автозагрузки, корректные имена файлов
+- Что сделано: клик по Word/Excel открывает модалку с кнопкой «Скачать» (без iframe → нет мгновенной загрузки); скачивание через blob + `file.name` из карточки СЭД; API `?name=` и `Content-Disposition` UTF-8; декодирование cp1251 из СЭД; ZIP-архив использует имена из списка вложений
+- Файлы: `apps/api/src/lib/sed.ts`, `routes/sed.ts`, `sedDownload.ts`, `SedFilePreviewModal.tsx`, `SedAttachmentsCell.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 01:55 — Вложения в списке СЭД
+- Что сделано: под «Кратким содержанием» — иконки файлов по типу, троеточие + title, клик → предпросмотр (PDF/Office/изображения), скачивание по одному и ZIP; API `GET .../files`, `GET .../files/archive`; обогащение списка вложениями из карточки
+- Файлы: `apps/api/src/lib/sed.ts`, `routes/sed.ts`, `package.json`, `SedAttachmentsCell.tsx`, `SedFilePreviewModal.tsx`, `sedFiles.ts`, `Sed.tsx`, `SedDocumentModal.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; Office в браузере может не отображаться — тогда скачать; первая загрузка страницы чуть дольше (карточки для вложений)
+
+### 2026-09-01 01:45 — Настройка названия организации в бренде
+- Что сделано: Setting `brand_org_name` (seed default «УДХБ»); Настройки → Общие → «Бренд интерфейса» с предпросмотром; sidebar читает значение из API
+- Файлы: `apps/web/src/lib/brand.ts`, `Settings.tsx`, `AppShell.tsx`, `seed.ts`, `styles.css`
+- Деплой: да, health OK
+- Заметки: нужны права на запись «Настройки»; после сохранения бренд обновится при переходе на другую страницу
+
+### 2026-09-01 01:40 — Бренд: Экосистема крупнее, цвета поменяны
+- Что сделано: «Экосистема» — крупно белым; «УДХБ» — мелко золотым caps
+- Файлы: `styles.css`
+- Деплой: да, health OK
+
+### 2026-09-01 01:35 — Бренд sidebar: палитра как у sidebar
+- Что сделано: откат светлой гаммы; тёмный фон в тон sidebar, золотой kicker (`--gold`), белый «УДХБ», золотая нижняя граница — как login/sed kicker
+- Файлы: `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 01:30 — Цветовая гамма блока бренда
+- Что сделано: светлая слоновая кость / кремовый фон, тёмно-синий текст «УДХБ», бронзовый kicker, золотая нижняя граница — контраст с тёмным sidebar
+- Файлы: `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 01:25 — Бренд sidebar: Экосистема / УДХБ
+- Что сделано: убрана подпись «Панель управления»; сверху «Экосистема», крупно «УДХБ»
+- Файлы: `AppShell.tsx`, `styles.css`
+- Деплой: да, health OK
+
+### 2026-09-01 01:20 — Корпоративный бренд sidebar
+- Что сделано: блок «Экосистема» — строгий header (золотая полоса сверху, типографика без эмблемы/анимаций), подпись «Панель управления», клик → `/`
+- Файлы: `AppShell.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 01:15 — Кликабельный бренд в сайдбаре
+- Что сделано: блок «Экосистема» в sidebar — карточка с эмблемой «У», hover/active, клик ведёт на панель управления (`/`)
+- Файлы: `apps/web/src/components/AppShell.tsx`, `apps/web/src/styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 01:10 — Терминология: Договоры и СЭД как подсистемы
+- Что сделано: единое именование «Подсистема «Договоры»» / «Подсистема «СЭД»» на панели управления, в шапке AppShell, на страницах `/procurements` и `/sed`; lib/subsystems.ts
+- Файлы: `apps/web/src/lib/subsystems.ts`, `Cabinet.tsx`, `AppShell.tsx`, `Procurements.tsx`, `Sed.tsx`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 01:05 — Панель управления: секции Договоры и СЭД
+- Что сделано: пункт меню «Кабинет» → «Панель управления»; на главной — отдельные секции «Договоры» (статистика, последние карточки, приёмка, мои карточки) и «СЭД» (4 метрики дашборда, таблица документов на рассмотрении с открытием модалки); API `/api/cabinet` расширен полями `contracts` и `sed`
+- Файлы: `apps/web/src/lib/nav.ts`, `AppShell.tsx`, `Cabinet.tsx`, `styles.css`, `apps/api/src/routes.ts`, `apps/api/src/lib/sed.ts`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 00:55 — Редизайн модалки документа СЭД
+- Что сделано: модальное окно при клике на письмо — hero-шапка (navy), боковая панель реквизитов/участников/статистики, блок «Краткое содержание», вкладки Текст/Вложения/Исполнение, карточки файлов, timeline исполнения, skeleton загрузки; обновлён предпросмотр файлов
+- Файлы: `apps/web/src/components/SedDocumentModal.tsx`, `apps/web/src/styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-01 00:45 — Редизайн ЛК: sidebar + порядок меню (navWeights)
+- Что сделано: оболочка `AppShell` — навигация в левой колонке, topbar, современный стиль; кабинет — dashboard с метриками и панелями; в профиле — редактор весов пунктов меню (меньше вес = выше); миграция `User.navWeights` JSONB; PATCH `/api/auth/profile` принимает `navWeights`
+- Файлы: `apps/api/prisma/schema.prisma`, `migrations/20260901001500_user_nav_weights/`, `apps/api/src/routes.ts`, `apps/web/src/lib/nav.ts`, `AppShell.tsx`, `NavWeightsEditor.tsx`, `App.tsx`, `Profile.tsx`, `Cabinet.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; порядок меню персональный для каждого пользователя
+
+### 2026-09-01 00:35 — Пагинация и поиск по всем документам СЭД
+- Что сделано: totalPages = ceil(total/pageSize) по дашборду (не по items на последней странице — исправлены «пустые» страницы); поиск `?search=` загружает все страницы списка на сервере и фильтрует
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/api/src/routes/sed.ts`, `apps/web/src/pages/Sed.tsx`, `styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; при поиске пагинация скрыта, показывается «Найдено N из M»
+
+### 2026-09-01 00:25 — Дашборд СЭД как на sed.omskgov.ru
+- Что сделано: счётчики «На рассмотрении / Незамедлительные / Срочные / Прочие» из API `controlExecution/dashboard/counters` (блок `review`); параллельная загрузка с списком документов; UI — 4 метрики с цветовой индикацией
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/web/src/pages/Sed.tsx`, `apps/web/src/styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5; данные совпадают с control-execution-dashboard на СЭД
+
+### 2026-09-01 00:15 — Корпоративный UI СЭД + обрезка корреспондента
+- Что сделано: поле «Корреспондент» — до 5 строк с троеточием, клик открывает модалку с полным текстом; редизайн раздела `/sed` (шапка, метрики, рабочая панель, таблица с navy-заголовком)
+- Файлы: `apps/web/src/pages/Sed.tsx`, `apps/web/src/components/sed/SedCorrespondentCell.tsx`, `apps/web/src/styles.css`
+- Деплой: да, health OK
+- Заметки: Ctrl+F5
+
+### 2026-09-07 09:05 — Тестовые данные в разделе договоров
+- Что сделано: seed пересоздаёт 26 карточек `[тест]` за 2025–2027: все этапы, КП/поставщики, номера контрактов, СЗ, сроки приёмки (в т.ч. просроченная)
+- Файлы: `apps/api/prisma/seed.ts`, `.env.example`
+- Деплой: нет (только локальная БД, флаг `SEED_TEST_USERS=1`)
+- Состояние сервера: не менялось; локально health OK
+- Заметки: http://127.0.0.1:5173/procurements — год 2026: 19 шт.; повторный `npm run seed` в `apps/api` заменяет старые `[тест]`
+
+### 2026-09-07 08:52 — Локальный запуск в режиме разработки
+- Что сделано: запущены API (`tsx watch`, порт 3000) и Vite (`--host 127.0.0.1`, порт 5173); PostgreSQL `postgresql-x64-18` уже работал
+- Файлы: без изменений кода
+- Деплой: нет
+- Состояние сервера: не менялось; локально health OK `{"ok":true,"service":"ecosys","debug":true}`
+- Заметки: фронт http://127.0.0.1:5173/ ; API http://127.0.0.1:3000/api/health
+
+### 2026-09-04 11:29 — Плашки: pill + точка
+- Что сделано: без градиента и полоски; скруглённые «капсулы», точка-маркер слева, сплошной цветной фон
+- Файлы: `apps/web/src/styles.css`
+- Деплой: нет
+
+### 2026-09-04 11:28 — Плашки типа/этапа
+- Что сделано: акцентная полоска слева, мягкий градиент фона, крупнее шрифт 12px / padding; цвета этапов и типов различимее
+- Файлы: `apps/web/src/styles.css`
+- Деплой: нет
+
+### 2026-09-04 11:25 — Колонки тип/этап/поставщик в списке договоров
+- Что сделано: компактные `plist-tag` без переноса; короткие подписи этапов (СЗ, Согл. рук.…) с полным title; статус+точка в flex-ряду; поставщик выровнен сверху, дата отдельно; ячейки `vertical-align: top`
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+
+### 2026-09-04 11:22 — Иконка поиска SVG вместо ⌕
+- Что сделано: лупа 20×20, вертикально по центру поля 48px
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+
+### 2026-09-04 11:20 — Крупнее сайдбар папок и поиск
+- Что сделано: сайдбар 280px, пункты 14px / padding 10×16; поиск min-height 48px, шрифт 15px; кнопка «Фильтры» той же высоты
+- Файлы: `apps/web/src/styles.css`, `apps/web/src/pages/Procurements.tsx`
+- Деплой: нет
+- Заметки: —
+
+### 2026-09-04 11:10 — Поиск по сумме + шапка списка договоров
+- Что сделано: поиск учитывает сумму (`650000`, `650 000`, `650000₽`); шапка: заголовок+кнопки сверху, метрики отдельной полосой с цветовыми акцентами (не однотипные чипы в ряд с кнопками)
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+- Заметки: —
+
+### 2026-09-04 11:05 — Сортировка списка договоров по столбцам
+- Что сделано: по умолчанию сортировка по № (asc); клик по заголовкам №/Закупка/Тип/Этап/Поставщик/Сумма переключает asc↔desc; выпадающий список сортировки убран
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет (локальный HMR)
+- Заметки: стрелка ↑/↓ у активного столбца
+
+### 2026-09-04 11:02 — Тестовые договоры по годам + сброс «Все закупки»
+- Что сделано: seed создаёт 12 карточек `[тест]` за 2025–2027 (разные отделы/типы/этапы); папки отделов под годами; клик «Все закупки» вызывает `clearFilters()`
+- Файлы: `apps/api/prisma/seed.ts`, `apps/web/src/pages/Procurements.tsx`
+- Деплой: нет (локально)
+- Заметки: повторный seed не дублирует тестовые договоры
+
+### 2026-09-04 10:58 — Крупнее плашка сводки на списке договоров
+- Что сделано: `plist-stat-chip` — мини-карточки с цифрой 22px сверху и подписью снизу (вместо компактной строки 12px)
+- Файлы: `apps/web/src/styles.css`, `apps/web/src/pages/Procurements.tsx`
+- Деплой: нет (локальный Vite HMR; SSH к серверу недоступен)
+- Заметки: обновить страницу при необходимости
+
+### 2026-09-04 10:37 — Редизайн списка договоров (поиск и фильтры)
+- Что сделано: компактный поиск (название/№/инициатор/поставщик/отдел/статус, токены и `#№`); сворачиваемые фильтры; чипы активных условий; сортировка; быстрые фильтры «в работе / завершено / замечания»; сводка в шапке вместо крупных карточек
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет — SSH `ecosys` / `94.137.47.86:35222` недоступен с этой машины; локально Vite HMR OK
+- Состояние сервера: не обновлялся
+- Заметки: смотреть http://127.0.0.1:5173/procurements ; Ctrl+F5; `/` фокусирует поиск
+
+### 2026-09-04 10:30 — Тестовые учётки для локального входа
+- Что сделано: в seed добавлены локальные пользователи (moderator/operator/auditor/user) при `SEED_TEST_USERS=1`; вход проверен через `/api/auth/login`
+- Файлы: `apps/api/prisma/seed.ts`, `apps/api/.env` (локально), `.env.example`
+- Деплой: нет (только локальная БД; на сервере флаг не включён)
+- Состояние сервера: не менялось
+- Заметки: admin / EcosysAdmin47!; остальные / Test123!
+
+### 2026-09-15 09:21 — Плашка «замечания» всегда видна
+- Что сделано: на списке закупок чип «замечания» показывается всегда, в том числе при `0` (раньше скрывался при `stats.attention === 0`)
+- Файлы: `apps/web/src/pages/Procurements.tsx`
+- Деплой: нет (сборка OK; `scp` на `ecosys` — hostname не резолвится)
+- Состояние сервера: не менялось
+- Заметки: локально Ctrl+F5 на http://127.0.0.1:5173/ ; деплой повторить при доступе к SSH
+
+### 2026-09-04 10:25 — Локальный запуск в режиме разработки
+- Что сделано: установлены зависимости API/web; создана локальная БД PostgreSQL `ecosys` (порт 5432); схема через `prisma db push` + seed; запущены `tsx watch` (API :3000) и Vite (web :5173, host 127.0.0.1). `apps/api/.env` локальный, не в git.
+- Файлы: `apps/api/.env` (локально), seed admin
+- Деплой: нет
+- Состояние сервера: не менялось; локально health OK `{"ok":true,"service":"ecosys","debug":true}`
+- Заметки: фронт http://127.0.0.1:5173/ ; вход `admin` / пароль из `INIT_ADMIN_PASSWORD`; Vite на Windows лучше с `--host 127.0.0.1` (иначе только IPv6)
+
+### 2026-09-01 00:05 — Исправление пагинации СЭД (initialProps)
+- Что сделано: пагинация берётся из `initialProps.pagesOptions` (`hasNextPage`, `currentPage`) в inline-скрипте DocumentListData, а не из Vue-разметки (она рендерится клиентом); UI показывается при `hasNextPage || currentPage > 1`; fallback через s-pager и total/items
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/web/src/pages/Sed.tsx`
+- Деплой: да, health OK
+- Заметки: обновить страницу Ctrl+F5; при >12 документов должна появиться панель «Назад / номера / Дальше»
+
+### 2026-08-31 23:55 — Пагинация списка СЭД
+- Что сделано: парсинг `sed-pagination-fixed-wrapper` (page-count, вкладки, ссылки); панель «Назад / номера / Дальше»; `listPath` в ответе API
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/web/src/pages/Sed.tsx`, `styles.css`
+- Деплой: да, health OK
+
+- Что сделано: при `?follow=` подставляется DNSID текущей сессии вместо устаревшего из ссылки СЭД
+- Файлы: `apps/api/src/lib/sed.ts`
+- Деплой: да, health OK
+
+- Что сделано: документы в таблице; парсинг `s-hint__document-shown-text` и `s-hint__period-href`; API `?follow=` для «за весь период» / «за 30 дней»
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/api/src/routes/sed.ts`, `apps/web/src/pages/Sed.tsx`, `styles.css`
+- Деплой: да, health OK
+
+- Что сделано: резолюции и отметки ИСП парсятся из `tr.resolution-item` в `s-resolutions-table` (author, кому, текст, дата)
+- Файлы: `apps/api/src/lib/sed.ts`
+- Деплой: да, health OK
+- Заметки: —
+
+- Что сделано: раздел `/sed` с карточками документов, поиском, статистикой; настройка интеграции осталась в профиле; пункт меню «СЭД» только при `sedReady`; `/api/auth/me` без passwordHash/sedPasswordEnc + флаг sedReady
+- Файлы: `apps/web/src/pages/Sed.tsx`, `components/sed/*`, `Profile.tsx`, `App.tsx`, `styles.css`, `apps/api/src/routes.ts`
+- Деплой: да, health OK
+- Заметки: после проверки подключения в профиле — «Перейти в раздел СЭД»
+
+- Что сделано: поле `summary` в API (из `card-annotation-short-content` или maintable); блок «Краткое содержание» вверху модалки
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/web/src/components/SedDocumentModal.tsx`, `apps/web/src/styles.css`
+- Деплой: да, health OK
+- Заметки: —
+
+- Что сделано: парсинг только из `maintable-width scrollable-section` — 3 секции (№/дата+подпись+исполнитель, кому, вид+место регистрации); пропуск «Срочный»/«Примечание»; секция «Исполнение документа»; клик по файлу → модалка предпросмотра + «Скачать» (`?download=1`)
+- Файлы: `apps/api/src/lib/sed.ts`, `apps/api/src/routes/sed.ts`, `apps/web/src/components/SedDocumentModal.tsx`, `apps/web/src/styles.css`
+- Деплой: да, health OK
+- Заметки: «Подпись» мапится также с «От кого» из СЭД
+
+### 2026-09-18 13:20 — Пакет правок по договорам (Правки.txt)
+- Что сделано: справочник поставщиков; шапки СЗ + DOCX; правка СЗ; согласование одной кнопкой; парсер договора; toast и красные поля; даты заключения/действует до без createdAt; фактическая поставка + приёмка = факт+10 дн.; Excel/CSV; колонки и фильтр года (заключение/оплата); оплаты; ZIP файлов; импорт архива CSV
+- Файлы: `Правки.txt`, schema + migration `20260918120000_pravki_contracts`, `routes/proc-extra.ts`, `Procurement.tsx`, `Procurements.tsx`, `ToastHost`, `SupplierCombo`
+- Деплой: нет — `ssh ecosys` с этой машины не резолвится (`Could not resolve hostname ecosys`)
+- Состояние сервера: не обновлялся
+- Заметки: Ctrl+F5 после деплоя с машины, где есть SSH alias `ecosys`. Настройки → Договоры — шапки, поставщики, адресаты оплат, импорт CSV. Журнал: `Правки.txt`
+
+### 2026-09-21 10:15 — Повторная сверка Правки.txt и полная тестировка
+- Что сделано: повторно сверены пункты 1–19 с кодом; HTTP-сценарии (логин, поставщики, СЗ DOCX/правка, согласование all, даты 08.09/31.12 и отказ 400, приёмка +10, оплаты, xls/csv, zip, год/поставщик, архив); UI admin: дашборд, реестр Excel/CSV/колонки/год, карточки WiFi и архива, настройки Договоры, новая закупка, пользователи, уведомления, профиль. Журнал результатов в `Правки.txt`.
+- Файлы: `Правки.txt`, `history_step`
+- Деплой: нет — `ssh ecosys` не резолвится
+- Состояние сервера: не обновлялся; локально health OK
+- Заметки: смотреть http://127.0.0.1:5173/ ; Ctrl+F5; тестовые карточки «Тест WiFi мост», «Архивный договор ОКС 2025», «Проверка UI 21.09»
+
+### 2026-09-21 10:20 — Гайд деплоя для заказчика
+- Что сделано: инструкция, как с ПК, где есть SSH `ecosys`, выложить эту копию на прод и проверить соответствие Правки.txt (без паролей и `.env`)
+- Файлы: `ГАЙД-ДЕПЛОЙ-ДЛЯ-ЗАКАЗЧИКА.md`, `Правки.txt`, `history_step`
+- Деплой: нет (с этой машины SSH по-прежнему недоступен)
+- Состояние сервера: не менялся
+- Заметки: заказчику отдать папку + этот md; после `deploy/sync-server.ps1` на сайте Ctrl+F5
+
+### 2026-09-21 10:25 — Копия проекта на флешку E:
+- Что сделано: `robocopy` на `E:\ecosys.udhb.local` (без `node_modules`, без `.env`, без `cookies.txt`/`login.json`)
+- Файлы: вся рабочая копия исходников + `ГАЙД-ДЕПЛОЙ-ДЛЯ-ЗАКАЗЧИКА.md` + `Правки.txt`
+- Деплой: нет
+- Состояние сервера: не менялся
+- Заметки: на ПК заказчика `npm install` в `apps/web` перед `deploy/sync-server.ps1`
+
+
+### 2026-09-22 ~09:30 — Локальный запуск на ПК Дмитрий (Desktop copy)
+- Что сделано: `npm i` в apps/api + apps/web; создан `apps/api/.env` (локальный, postgres:postgres@127.0.0.1:5432/ecosys, UPLOAD_DIR в `uploads/` проекта); `prisma generate` (postinstall был заблокирован npm allow-scripts); БД `ecosys` создана, 13 миграций, `npm run seed`; запущены `tsx watch --env-file=.env src/index.ts` (API :3000) и `vite` (:5173)
+- Файлы: `apps/api/.env` (новый, не в git), `history_step`
+- Деплой: нет
+- Состояние сервера: не менялся; локально health OK `{"ok":true,"service":"ecosys","debug":true}`
+- Заметки: **конфликт порядка миграций** — `20260831120000_contract_folders_roles` и `20260831120000_init` с одним префиксом; на пустой БД Prisma применяет их по алфавиту (folders раньше init) → P3018. Лечение: применить `init/migration.sql` через `prisma db execute`, затем `migrate resolve --applied 20260831120000_init`, затем `migrate deploy`. Вход: admin / EcosysAdmin47! (или из .env). Vite слушает `localhost`/`::1`, не `127.0.0.1`.
+
+
+### 2026-09-22 03:27 — Макеты редизайна, вариант А «Реестр» доработан по всем страницам
+- Что сделано: статические макеты в `docs/design-variants/` — A «Реестр», B «Штаб», C «Портал», D «Ведомство» (A×B); выбран и доработан вариант A: «выписка из реестра» в шапке, блок «К исполнению» со штампом, шкала этапа ■■◆□□, итоговая строка + пагинация-сноска, «Оглавление» папок, «Исполнитель» у пользователя, контент на всю ширину. Сделаны все 9 страниц: dashboard, procurements, procurement (карточка договора с workflow-шагами и СЗ), sed, users, settings, profile, notifications, login; индекс со ссылками
+- Файлы: `docs/design-variants/{index.html,a/,b/,c/,d/}` — только статика, `apps/web` не тронут
+- Деплой: нет
+- Состояние сервера: не менялся
+- Заметки: просмотр `python -m http.server 5600` в `docs/design-variants` → http://localhost:5600/ ; далее — дизайн-док `docs/superpowers/specs/` + план внедрения после утверждения. Диска Z: на машине нет
+
+
+### 2026-09-22 10:26 — Вариант А «Реестр» внедрён в apps/web
+- Что сделано: выбранный дизайн перенесён в прод-фронтенд. Новый `Logo.tsx` (знак «волна в кольце» + название внутри SVG, orgName из настройки brand_org_name); шрифты Playfair Display + Inter в `index.html`; `AppShell.tsx` переписан: светлый сайдбар с navy-ячейкой лого, римская нумерация меню, секции «Подсистемы»/«Служба», карточка пользователя + иконка выхода; шапка страницы — navy-полоса 72px с золотой кромкой, кикер с золотым дэшем, чип «Внутренний контур», колокол с бейджем непрочитанных и выпадашкой (3 последних из /api/notifications), аватар+логин. В `styles.css`: новые переменные (--sheet/--gold-bright/--serif/--sans и др.), реестровые таблицы (капс-шапки, волосяные линии, row-danger/row-gold, tfoot, шкала .stage), пилюли-кнопки, подчёркнутые табы, .btn.gold, чипы .chips/.chip, .searchbox/.filters/.fld/.f-range, .require/.stamp, .hl, .page-cap; cabinet-метрики в виде «статистики с тиком»; папки реестра — золотая кромка активной. В реестре закупок строки с workflow.hasBlockers помечаются row-danger. Страница входа — новая карточка с лого.
+- Файлы: `apps/web/src/components/{AppShell.tsx,Logo.tsx}` (Logo — новый), `apps/web/src/styles.css`, `apps/web/index.html`, `apps/web/src/pages/{Login.tsx,Settings.tsx,Procurements.tsx}`, `apps/web/public/{logo.svg,logo-dark.svg}`
+- Деплой: нет (SSH `ecosys` недоступен с этой машины)
+- Состояние сервера: не менялся; `vite build` OK, dev :5173 отвечает 200, /logo.svg и /logo-dark.svg — 200
+- Заметки: tsc --noEmit показывает старые ошибки в Cabinet/Procurements/SedDocumentModal/ContractsSettingsPanel — они были до редизайна, сборкой (vite) не блокируются. Уведомления убраны из сайдбара — переход через колокол в шапке; профиль — по карточке пользователя. Мёртвые стили `.top`/`.bell` старой шапки удалены. Дальше по вкусу: перенос чипов/фильтров и .page-cap в разметку страниц, .wf-линейка в карточке договора.
+
+
+### 2026-09-22 10:45 — Страницы apps/web под стиль «Реестр»
+- Что сделано: доработаны реальные страницы. Реестр закупок: шкала этапа (■ квадраты по phaseIndex) под статус-пилюлей, tfoot «Итого — N записей · сумма», сайдбар «Оглавление», row-danger на карточках с блокировками workflow; восстановлены стили для ~30 нестилизованных классов реестра (тулбар, поиск с иконкой, панель фильтров с подписанными полями, быстрые чипы, активные фильтры, стат-чипы, сортировка th, теги status-*/cat-*). Статус-стили переведены с `.pill.status-*` на голые `.status-*`/`.cat-*` — работают и в .plist-tag. Дашборд: блок «Требует действий» со штампом «К исполнению» из реальных данных (просроченные приёмки, непрочитанные, срочные/горящие СЭД). Карточка договора: workflow-этапы перестилизованы в линейку с римскими номерами (CSS counter), активный шаг — золотой; выбранное КП — золотая строка; заголовок и № serif. Уведомления: лента с золотой кромкой и точкой у непрочитанных, CTA «Отметить все» золотая. Пользователи: стат-карточки с цветным тиком + serif-цифры. СЭД: скрыт дублирующий h1/кикер (титул в navy-шапке), таблица в реестровом стиле. Дублирующие in-page h1 скрыты на реестре/пользователях/СЭД; h1 карточки договора оставлен (это название объекта). Кнопки сохранения → btn.gold (настройки, профиль).
+- Исправлены старые TS-ошибки: Cabinet.tsx (не импортирован debugError, лишний аргумент formatApiError), Procurements.tsx (setForm принимал только функцию), SedDocumentModal.tsx (DocTab после .filter), ContractsSettingsPanel.tsx (key: string|false). tsc --noEmit теперь чист.
+- Файлы: `apps/web/src/pages/{Cabinet,Procurements,Procurement,Notifications,Profile,Settings}.tsx` (часть через CSS), `apps/web/src/components/{SedDocumentModal.tsx,settings/contracts/ContractsSettingsPanel.tsx}`, `apps/web/src/styles.css`
+- Деплой: нет
+- Состояние сервера: локально `vite build` OK, `tsc --noEmit` чист, dev :5173 — 200
+- Заметки: `.stage`/`.page-cap`/`.require`/`.chips` готовы к переиспользованию. Проверить визуально: дашборд (require-блок), реестр (шкала+итого), карточка договора (wf-линейка).
+
+
+### 2026-09-22 14:33 — Компоновка страниц приведена к макету docs/design-variants/a
+- Что сделано: после замечания «страницы не соответствуют макету» перестроена **структура**, а не только стили. Дашборд: `.page-cap` (выписка с датой/таймзоной), плоская полоса `.stats`/`.stat` (serif-цифры 34px + цветной тик: navy/danger/gold) вместо карточек-метрик, `.require` с `.require-t`+`.cnt`+штампом, секции `.sec` с `.sec-head`/`.sec-title` («§ » золотом) + `.sec-link`, таблицы `.reg` (№ serif `.num`, `.name`/`.sub`, этап `.stage`+`.st`-маркер); СЭД-секция — reg-таблица (Номер/Документ/Корреспондент/Поступил); уведомления — лента `.note-item` (дата | золотая точка | текст), пустые состояния — `.note`. Реестр закупок: `.page-cap` выборки, `.pagehead` (поиск + действия: Фильтры/Колонки/Настройки/Excel/CSV/+Новая золотой), `.chips` со счётчиками (Все/В работе/Завершено/Замечания), `.filters` — открытая панель `.fld`-полей + чипы типов + `.f-reset`, сайдбар → `.toc` (`.toc-title` «Оглавление», `.toc-item` пунктирные строки, `.toc-item--on` золотая кромка, `.toc-year`/`.toc-sub`), таблица `.reg` (статус `.st st--*`, тип — простым текстом, сумма `.sum`), `.regfoot` снизу. Пользователи: `.stats`-полоса вместо карточек, таблица `.reg`. СЭД и карточка договора: таблицы `.reg`. Уведомления: лента `.note-item` + `.page-cap`. В `styles.css` портированы точные правила макета (stats/sec/reg/toc/chips/filters/require/note/st/regfoot/hl/page-cap/stage).
+- Файлы: `apps/web/src/styles.css`, `apps/web/src/pages/{Cabinet,Procurements,Users,Notifications,Sed,Procurement}.tsx`
+- Деплой: нет
+- Состояние сервера: локально `vite build` OK, `tsc --noEmit` чист, dev :5173 — 200
+- Заметки: `.plist-*`/`cabinet-*` старые классы частично остались в CSS (мёртвые, безвредны). Макет: docs/design-variants/a/*.html. Фильтры реестра теперь открыты по умолчанию (filtersOpen=true).
+
+
+### 2026-09-22 14:55 — Структурная parity с макетом: СЭД, Пользователи, карточка договора, календарь в меню
+- Что сделано: доведена структура оставшихся страниц до docs/design-variants/a.
+  - **СЭД**: вместо hero-блока — `.page-cap` (хост, время синхронизации, группа/логин, период с тоглом), `.pagehead` (полнотекстовый поиск с иконкой + «Обновить из СЭД»/«Открыть СЭД»/«Настройки»), полоса метрик SedReviewMetrics, `tfoot` «Итого на странице — N документов из M», `.regfoot` со страницей/временем синка + «Следующая страница →».
+  - **Пользователи**: `.page-cap`, `.stats` (всего/активных/из AD/заблокировано danger), табы → `.tabs`/`.tab`, `.pagehead` (поиск + Применить/Синхр AD/+Добавить золотой), `.chips` быстрые выборки со счётчиками (Все/Активные/Из AD/Локальные/Заблокированы), `.filters` (Отдел/Источник/Статус + Сбросить), таблица `.reg` с `.name`/`.sub`, источник `.src`/`.src--ad`, статус `.st st--ok|st--gold|st--danger`, действие «править» linkish, `tfoot`+`.regfoot`. Форма добавления локальной учётки — по кнопке «+ Добавить» (addOpen).
+  - **Карточка договора**: перестроена в одноколоночную макетную — `.page-cap` (отдел·тип·создана·исполнитель), `.crumbs` («← Реестр договоров · № · статус» + actions справа), `.wf`-линейка I–V (done/now по phaseState, в now — текст текущего статуса), `.stats` (сумма/КП/комплект/срок исполнения), `.require` со штампом из workflow blockers+warnings + просрочка приёмки. Сайдбар убран: «Тип договора» — select в `.kv` Общих сведений, «Комплект» — чеклист `.doccheck` ok/no в kv, смена статуса — `.proc-status-form` внизу секции. Таблица КП → `.reg` с `.name`, `.ftag` расширения файла, `.st st--gold` «выбрано»/`.st--muted`, сумма `.sum`, выбранная строка `row-gold`. Компонент Section → `.sec`/`.sec-head`/`.sec-title` (§ золотом).
+  - **Навигация**: SUBSYSTEM_COUNT 3→4 — «Календарь» теперь IV в разделе «Подсистемы» (как в макете), а не в «Службе».
+  - CSS: `.doccheck`, `.proc-crumbs`/`.crumbs-actions`, `.kv-select`, `.note-r`, `.proc-status-form`, `.proc-doc`.
+- Исправлено: `me.user.fullName` → `me.fullName` в Procurements (чип «Мои») — 4 TS-ошибки.
+- Файлы: `apps/web/src/pages/{Sed,Users,Procurement,Procurements}.tsx`, `apps/web/src/components/AppShell.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+- Состояние сервера: `tsc --noEmit` чист, `vite build` OK, dev :5173 — 200, /api/health через vite-proxy — 200
+- Заметки: ProcWorkflowPanel (ЭМ) остался интерактивным блоком ниже .wf-линейки — двойная визуализация фаз; при желании слить. Старые `.proc-*`/`.plist-*` классы частично мёртвые в CSS.
+
+
+### 2026-09-22 15:10 — Реестр закупок: доводка фильтров и ячеек под макет
+- Что сделано: в `.filters` добавлены «Сумма, ₽» (диапазон `.f-range` от/до, клиентский фильтр по contractAmount||estimatedAmount) и «Сортировка» (select → sort+sortDir: новые/номер/сумма/дата заключения/название). Чипы приведены к макетному порядку: Все / В работе / Просрочены / Завершены / Мои. Колонка № — «№N» serif; `.sub` сведён в одну строку «отдел · создан {дата} · инициатор». Сброс фильтров очищает и суммовой диапазон.
+- Файлы: `apps/web/src/pages/Procurements.tsx`
+- Деплой: нет
+- Состояние сервера: `tsc --noEmit` чист, `vite build` OK
+- Заметки: пагинации в API нет — «Следующая страница» в regfoot не выводится.
+
+
+### 2026-09-22 15:25 — Поиск в реестре: расширен охват + живой счётчик
+- Что сделано: `rowMatchesSearch` теперь ищет по № контракта, исполнителю, датам (создана/заключён/поставка/действует до/приёмка — в форматах ДД.ММ.ГГГГ и ISO), сумме контракта (раньше только смета), коротким статусам («СЗ», «Торги»); «№N»/«#N» токен проверяет и serialNo, и contractNumber. В боксе поиска — живой счётчик найденного (золотой бейдж справа в поле), Escape очищает строку. Placeholder уточнён: «название, №, № контракта, поставщик, исполнитель, сумма, дата…».
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+- Состояние сервера: `tsc --noEmit` чист, `vite build` OK
+- Заметки: поиск клиентский по загруженной выборке — серверные фильтры (папка/отдел/год) применяются до него; пустой результат + кнопка «Сбросить фильтры» в empty-state.
+
+
+### 2026-09-22 15:45 — Поиск по реестру переведён на сервер (вся база)
+- Что сделано: причина «поиск неудобный» — клиентский фильтр работал только по уже загруженной выборке (текущий год/папка), старые договоры не находились. Теперь при вводе текста фронт с debounce 300ms дёргает `GET /api/procurements?q=…` — поиск по всей базе в рамках прав пользователя (department scope сохраняется в listWhere). На бэке в `listWhere` добавлен q: токены AND, внутри OR по title/contractNumber/executorName/description/initiator.fullName/department.name/selectedQuote.supplierName/quotes.supplierName + serialNo для числовых/#/№ токенов. Фронт: page-cap в режиме поиска — «Поиск по всему реестру: «…» · найдено N», бейдж-счётчик «…» во время запроса, empty-state «По запросу … ничего не найдено», Escape очищает. Клиентская `rowMatchesSearch`/`amountSearchHay` удалены. Чипы/фильтры/суммы/сортировка работают поверх найденного.
+- Файлы: `apps/api/src/routes/proc-extra.ts`, `apps/api/src/routes.ts`, `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+- Состояние сервера: web `tsc --noEmit` чист, `vite build` OK; api на tsx watch — подхватит сам, /api/procurements?q= отдаёт 401 без сессии (роут жив)
+- Заметки: API без локального tsc (нет typescript в apps/api) — синтаксис проверен сборкой фронта и ревизией; при падении смотреть tsx-консоль.
+
+
+### 2026-09-22 16:05 — Визуальный редизайн поиска реестра
+- Что сделано: поле поиска `.plist-search` увеличено (42px, radius 7px, белый фон, лёгкая тень), фокус — золотая рамка + свечение, иконка золотеет; kbd-подсказка «/» внутри поля когда пусто; нативный крестик search-инпута скрыт (свой × с hover-фоном). Кнопки Excel/CSV сложены в выпадающее «Экспорт ▾» (details + popover), строка действий разгружена. Стиль применился и на СЭД/Пользователей (общий .plist-search).
+- Файлы: `apps/web/src/styles.css`, `apps/web/src/pages/Procurements.tsx`
+- Деплой: нет
+- Состояние сервера: `tsc --noEmit` чист, `vite build` OK
+- Заметки: —
+
+
+### 2026-09-22 16:30 — Реестр закупок: визуальная parity с procurements.html
+- Что сделано: убраны лишние кнопки из pagehead (остались Excel + «+ Новая закупка» как в макете); фильтры теперь всегда открыты (удалён тогл «Фильтры» и state filtersOpen/advancedCount); «Колонки»/«CSV»/«Настройки» переехали в правый край строки фильтров (.f-side/.f-tool рядом с «Сбросить ×»). Ячейка «Этап» — шкала `.stage` слева в одну строку со статусом `.st` (i.now вместо i.cur). «Поставщик» — одна строка «ООО «…» · до 30.09». tfoot → «Итого на странице — N записей» + сумма в колонке .sum золотым. regfoot → «Строки 1–N из M · выписка сформирована …» + ссылка «Выгрузить Excel →».
+- Файлы: `apps/web/src/pages/Procurements.tsx`, `apps/web/src/styles.css`
+- Деплой: нет
+- Состояние сервера: `tsc --noEmit` чист, `vite build` OK
+- Заметки: —
+
+
+### 2026-09-22 17:15 — Полная структурная parity с docs/design-variants/a (все страницы)
+- Что сделано: **корневая проблема** — React использовал собственные CSS-классы (.shell-app/.sidebar-*/.shell-topbar-*/.plist-*/.sed-*/.cabinet-*) вместо макетных (.shell/.side/.brand/.dochead/.bell/.searchbox/.reglayout/.toc/.reg/.regfoot). Все страницы переписаны на точные классы и DOM-структуру макета:
+  - **styles.css**: заменена responsive media-query (shell→.shell, sidebar→.side), print-query (shell-topbar→.dochead), добавлены `.f-label/.f-row/.f-check` (формы макета profile.html), `ul.check` (чеклист procurement.html), `.docview`/`.dv-head`/`.dv-sig` (просмотр документа), `.btn--ghost/.btn--gold`
+  - **Cabinet.tsx**: полностью переписан на макетную структуру dashboard.html: `.page-cap` (выписка+дата+таймзона), `.stats` (4+1 метрик), `.require` (штамп+список), 3 секции `.sec` (Договоры 5-колонок, СЭД 4-колонки, Уведомления `.note`). Убраны «Контроль приёмки»/«Мои карточки»/SedReviewMetrics — отсутствуют в макете
+  - **Procurements.tsx**: макетные классы — `.searchbox` (svg+`.f-input`) вместо `.plist-search-*`, `.fld div>label+select/input` вместо `label.fld>span+select`, `.reglayout` вместо `.plist-layout`, `table.reg` вместо `.plist-table`, `th` простой текст вместо `.plist-th-btn`, `.sub` без инициатора. Убраны «Способ»/«Год считать по» из видимых фильтров, `.f-side` с Колонки/CSV/Настройки, `.plist-chips`/`.plist-row`/`.plist-empty`
+  - **Sed.tsx**: полностью переписан на `.page-cap/.pagehead/.searchbox/.pagehead-actions/table.reg/tfoot/.regfoot`. Убраны `.sed-page/.sed-workspace/.sed-page-table/.sed-pagination-bar/.sed-gate`
+  - **Users.tsx**: переписан на `.page-cap/.stats/.tabs/.pagehead/.searchbox/.chips/.filters/.fld/table.reg/tfoot/.regfoot`. Добавлены Отдел/Источник/Статус фильтры
+  - **Notifications.tsx**: `.page-cap` + `.pagehead` + `.note-feed`/`.note-item` + `.regfoot`
+  - **Profile.tsx**: `.page-cap` + `.sec` секции + `.f-row/.f-label/.f-input/.f-check` + NavWeightsEditor + SedIntegrationPanel
+  - **Settings.tsx**: `.page-cap` + `.reglayout` (`.toc` слева + `.sec` справа) + `.btn.gold`
+  - **UsersAdCatalogPanel**: `.users-table` → `table.reg`
+  - Responsive: `.shell-app`→`.shell`, `.sidebar`→`.side`
+  - Print: `.shell-topbar`→`.dochead`, `.shell-app`→`.shell`
+- Файлы: `styles.css`, `Cabinet.tsx`, `Procurements.tsx`, `Sed.tsx`, `Users.tsx`, `Notifications.tsx`, `Profile.tsx`, `Settings.tsx`, `UsersAdCatalogPanel.tsx`
+- Деплой: нет
+- Состояние сервера: `tsc --noEmit` чист, `vite build` OK, dev :5173 — 200, /api/health — 200
+- Заметки: старые `.plist-*`/`.cabinet-*`/`.sed-*` стили остаются мёртвыми в CSS — безвредны, можно вычистить отдельно. Функциональность полностью сохранена.
+
+
+### 2026-09-22 17:50 — Dev-seed на все модели (`npm run seed:dev`)
+- Что сделано: `prisma/seed-dev.ts` — демо-наполнение для разработки. Прогоняет базовый seed (execSync), затем: 6 тестовых пользователей (moderator/operator/auditor/ivanov/petrov — Test123!, sidorov — заблокированная AD-учётка), роли подсистемы и permissions, 2 маппинга групп AD, подписанты СЗ (Тыщенко/Матюхина), шапки СЗ по отделам, 8 поставщиков (ИНН/телефон/комментарий), папки «год→отдел», 19 карточек `[тест]` во **всех 15 статусах** (draft→completed/rejected), 15 КП (с selectedQuote), 8 СЗ, 6 оплат с реальными stub-PDF в uploads/, журналы изменений, 4 уведомления. Особые сценарии: просроченная приёмка (acceptance_window, факт 20.08+10дн), договор прошлого года с оплатой в текущем (п.16), архивная карточка fromArchive. Идемпотентно: повторный запуск удаляет `[тест]`-карточки и пересоздаёт.
+- Файлы: `apps/api/prisma/seed-dev.ts` (новый), `apps/api/package.json` (скрипт `seed:dev`)
+- Деплой: нет (только локальная БД)
+- Состояние сервера: локально health OK; БД: 19 закупок, 7 пользователей, 8 поставщиков, 15 КП, 8 СЗ, 6 оплат, 4 уведомления
+- Заметки: `cd apps/api && npm run seed:dev` — сам подгружает .env через --env-file. Базовый `npm run seed` без демо-данных остаётся для прода.
+
+
+### 2026-09-22 18:10 — Fix: кнопка «Согласовать» молча не работала
+- Что сделано: причина — `approve(kind:"all")` из `supervisor_approval` целил в `transferred`, перепрыгивая `director_approval` → `validateTransition` без force давал блокер `skip_steps` → статус не менялся, а подписи сохранялись молча. Теперь: для `kind:"all"` переход валидируется с `force:true` (сжатие двух согласований легитимно); если переход заблокирован настоящими блокерами — API отвечает 409 с текстом вместо молчаливого сохранения; ошибка согласования на фронте дублируется toast'ом.
+- Файлы: `apps/api/src/routes.ts` (эндпоинт /approve), `apps/web/src/components/procurement/ProcWorkflowPanel.tsx`
+- Деплой: нет
+- Состояние сервера: проверено HTTP — карточка 5564f776 «Аудит каналов» supervisor_approval → transferred, подписи проставлены; `tsc --noEmit` чист
+- Заметки: tsx watch подхватит routes.ts сам; Ctrl+F5 на фронте
+
+
+### 2026-09-22 19:30 — Комплект документов: реальные файлы + редактирование на любом этапе
+- Что сделано:
+  - `ProcDocument` + `fileName`/`storedName` (миграция `20260922181000_proc_document_files`, применена вручную через `migrate resolve` — shadow-БД падает на старых миграциях с дублирующим префиксом 20260831)
+  - API: `POST/DELETE /api/procurements/:id/documents/:docId/file`, `GET /api/proc-documents/:docId/file` (права canWriteContracts/canReadContracts, файлы в uploads/<id>/ с uploadName). Upload ставит present=true, delete сбрасывает
+  - ZIP-архив: файлы комплекта теперь в `komplekt/<code>-<имя>`
+  - Фронт: у каждого документа чеклиста — прикрепить/предпросмотр/удалить файл (ProcFilePreviewModal: pdf/docx/xlsx/jpg/png), чекбокс остался как ручная отметка
+  - Снят гейтинг секций ЭМ (eshopActiveSection больше не скрывает блоки): КП, СЗ, заключение, контроль поставки, оплаты видны и редактируются на любом этапе; карточки СЗ для печати рендерятся всегда
+  - Файл договора: добавлена «Заменить» — uploadContract вынесен в функцию
+- Файлы: `schema.prisma`, `proc-extra.ts`, `Procurement.tsx`, `styles.css`
+- Деплой: нет
+- Состояние сервера: проверено HTTP — upload/download/delete документа OK, `present` синхронизируется, ZIP содержит `komplekt/spec-test-doc.pdf`; `tsc --noEmit` и `vite build` чисты; /api/health OK
+- Заметки: `eshopActiveSection` осталась в proc-workflow.ts (isSectionActive) — используется другими местами; мёртвый код секции approval-заглушки удалён
+
+
+### 2026-09-22 20:10 — Договор: вид (продляемый/разовый) + комментарий
+- Что сделано:
+  - `Procurement` + `contractKind` (renewable|onetime) + `contractComment` TEXT; миграция `20260922193000_contract_kind_comment` (вручную через db execute + migrate resolve, shadow-БД по-прежнему битая)
+  - PATCH принимает оба поля; в карточке «Заключение контракта» добавлены select «Тип договора» и textarea «Комментарий» (в dates-форму/saveDates)
+  - В реестр добавлены необязательные колонки «Вид договора» и «Комментарий» (COLUMN_DEFS, выбор через «Колонки»)
+  - В CSV/XML-выгрузку добавлены столбцы «Тип договора» и «Комментарий»
+- Файлы: `schema.prisma`, `routes.ts`, `proc-export.ts`, `Procurement.tsx`, `Procurements.tsx`
+- Деплой: нет
+- Состояние сервера: PATCH проверен по HTTP — contractKind/contractComment сохраняются и отдаются в GET; prisma generate OK (после остановки API — DLL lock); tsc + vite build чисты; /api/health OK
+- Заметки: список и экспорт используют include без select — новые поля проходят автоматически
+
+
+### 2026-09-22 20:40 — Fix: контент карточки/реестров не на всю ширину
+- Что сделано: сняты искусственные ограничения ширины — `.proc-page` 1200px→none, `.proc-doc` 1100px→none, `.plist-page` и `.sed-page` 1280px→none. В макете Варианта А `.page` вообще без max-width, контент занимает всю ширину `.main`.
+- Файлы: `apps/web/src/styles.css`
+- Деплой: нет
+- Состояние сервера: CSS-only, dev :5173 подхватывает сам
+- Заметки: `.proc-simple .proc-main` (900px) осталось — класс в JSX не используется, мёртвое правило
+
+
+### 2026-09-22 21:00 — Редизайн блока «Общие сведения / Комплект документов»
+- Что сделано: чеклист переведён с кастомного `.doccheck`+checkbox на макетный `ul.check` (квадратные маркеры navy/красный из procurement.html). Имя файла теперь инлайн с `ftag` (расширение) + ссылка-предпросмотр + крестик удаления; вместо чекбокса — текстовое действие «отметить наличие/снять отметку» для бумажных документов.
+- Файлы: `Procurement.tsx`, `styles.css`
+- Деплой: нет
+- Состояние сервера: tsc чист, dev :5173

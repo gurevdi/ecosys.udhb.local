@@ -1,0 +1,364 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserSource {
+  local
+  ad
+}
+
+enum LawType {
+  fz44
+  fz223
+}
+
+enum ProcMethod {
+  electronic_shop
+  auction
+}
+
+enum ProcCategory {
+  service
+  supply
+  telecom
+}
+
+enum ProcStatus {
+  draft
+  collecting_quotes
+  memo
+  approval
+  supervisor_approval
+  director_approval
+  transferred
+  returned
+  published
+  bidding
+  contracted
+  execution
+  acceptance_window
+  completed
+  rejected
+}
+
+enum MemoAddressee {
+  director
+  deputy_director
+}
+
+/** Роли подсистемы «Договоры» */
+enum ContractSubsystemRole {
+  admin
+  moderator
+  operator
+  auditor
+}
+
+model Department {
+  id              String             @id @default(uuid())
+  code            String             @unique
+  name            String
+  users           User[]
+  procurements    Procurement[]
+  contractFolders ContractFolder[]
+  contractRoles   UserContractRole[]
+  letterheads     MemoLetterhead[]
+}
+
+model User {
+  id              String       @id @default(uuid())
+  login           String       @unique
+  passwordHash    String?
+  email           String?
+  fullName        String
+  position        String?
+  phone           String?
+  source          UserSource   @default(local)
+  adDn            String?
+  adGroups        Json?
+  adSyncedAt      DateTime?
+  adAccountDisabled Boolean    @default(false)
+  departmentId    String?
+  department      Department?  @relation(fields: [departmentId], references: [id])
+  isActive        Boolean      @default(true)
+  isAdmin         Boolean      @default(false)
+  notifyInApp     Boolean      @default(true)
+  notifyEmail     Boolean      @default(true)
+  sedGroupId      String?
+  sedGroupName    String?
+  sedUserId       String?
+  sedLogin        String?
+  sedPasswordEnc  String?
+  sedConnectedAt  DateTime?
+  sedLastTestAt   DateTime?
+  sedLastTestOk   Boolean?
+  navWeights      Json?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  permissions     UserPermission[]
+  contractRoles   UserContractRole[]
+  initiated       Procurement[]     @relation("Initiator")
+  supervisorApprovals Procurement[] @relation("SupervisorApproval")
+  directorApprovals   Procurement[] @relation("DirectorApproval")
+  contractExecutions  Procurement[] @relation("ContractExecutor")
+  quotes          Quote[]
+  memosFrom       ServiceMemo[]     @relation("MemoFrom")
+  memosAgreed     ServiceMemo[]     @relation("MemoAgreed")
+  memosCompiled   ServiceMemo[]     @relation("MemoCompiled")
+  notifications   Notification[]
+  procChangeLogs  ProcChangeLog[]
+  paymentsCreated ProcPayment[]
+}
+
+/** Маппинг группы AD → права и роли в экосистеме */
+model AdGroupMapping {
+  id            String   @id @default(uuid())
+  adGroup       String   @unique
+  label         String
+  isAdmin       Boolean  @default(false)
+  permissions   Json     @default("[]")
+  contractRoles Json     @default("[]")
+  sortOrder     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model UserPermission {
+  id       String  @id @default(uuid())
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource String
+  canRead  Boolean @default(false)
+  canWrite Boolean @default(false)
+
+  @@unique([userId, resource])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+/** Иерархия папок для представления договоров (год → отдел → …) */
+model ContractFolder {
+  id           String           @id @default(uuid())
+  name         String
+  parentId     String?
+  parent       ContractFolder?  @relation("FolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     ContractFolder[] @relation("FolderTree")
+  year         Int?
+  departmentId String?
+  department   Department?      @relation(fields: [departmentId], references: [id])
+  sortOrder    Int              @default(0)
+  createdAt    DateTime         @default(now())
+  procurements Procurement[]
+
+  @@index([parentId, sortOrder])
+}
+
+/** Назначение роли подсистемы «Договоры» (departmentId = null — все отделы) */
+model UserContractRole {
+  id           String                @id @default(uuid())
+  userId       String
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         ContractSubsystemRole
+  departmentId String?
+  department   Department?           @relation(fields: [departmentId], references: [id])
+  scopeKey     String                @default("")
+
+  @@unique([userId, role, scopeKey])
+}
+
+model Procurement {
+  id                  String          @id @default(uuid())
+  serialNo            Int             @unique
+  title               String
+  law                 LawType
+  method              ProcMethod
+  category            ProcCategory    @default(service)
+  status              ProcStatus      @default(draft)
+  departmentId        String
+  department          Department      @relation(fields: [departmentId], references: [id])
+  folderId            String?
+  folder              ContractFolder? @relation(fields: [folderId], references: [id])
+  budgetYear          Int?
+  initiatorId         String
+  initiator           User            @relation("Initiator", fields: [initiatorId], references: [id])
+  description         String?
+  estimatedAmount     Decimal?    @db.Decimal(14, 2)
+  contractNumber      String?
+  contractDate        DateTime?
+  contractAmount      Decimal?    @db.Decimal(14, 2)
+  deliveryUntil       DateTime?
+  acceptanceStartAt   DateTime?
+  acceptanceDueAt     DateTime?
+  contractDeptNote    String?
+  publishedAt         DateTime?
+  biddingStartAt      DateTime?
+  biddingEndAt        DateTime?
+  supervisorApprovedAt DateTime?
+  supervisorApprovedById String?
+  supervisorApprovedBy User? @relation("SupervisorApproval", fields: [supervisorApprovedById], references: [id])
+  directorApprovedAt   DateTime?
+  directorApprovedById String?
+  directorApprovedBy   User? @relation("DirectorApproval", fields: [directorApprovedById], references: [id])
+  selectedQuoteId     String?     @unique
+  selectedQuote       Quote?      @relation("SelectedSupplier", fields: [selectedQuoteId], references: [id])
+  contractFileName    String?
+  contractStoredName  String?
+  executorName        String?
+  executorUserId      String?
+  executorUser        User?       @relation("ContractExecutor", fields: [executorUserId], references: [id])
+  performanceDays     Int?
+  acceptanceDays      Int?        @default(10)
+  actualDeliveryAt    DateTime?
+  validUntil          DateTime?
+  contractKind        String?
+  contractComment     String?
+  fromArchive         Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  quotes              Quote[]
+  memos               ServiceMemo[]
+  documents           ProcDocument[]
+  changeLogs          ProcChangeLog[]
+  payments            ProcPayment[]
+}
+
+/** История всех изменений по карточке договора */
+model ProcChangeLog {
+  id            String      @id @default(uuid())
+  procurementId String
+  procurement   Procurement @relation(fields: [procurementId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  section       String
+  action        String
+  summary       String
+  details       String?
+  createdAt     DateTime    @default(now())
+
+  @@index([procurementId, createdAt(sort: Desc)])
+}
+
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String
+  inn       String?
+  phone     String?
+  comment   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  quotes    Quote[]
+
+  @@index([name])
+}
+
+model Quote {
+  id            String      @id @default(uuid())
+  procurementId String
+  procurement   Procurement @relation(fields: [procurementId], references: [id], onDelete: Cascade)
+  supplierId    String?
+  supplier      Supplier?   @relation(fields: [supplierId], references: [id])
+  supplierName  String
+  amount        Decimal?    @db.Decimal(14, 2)
+  validUntil    DateTime?
+  comment       String?
+  fileName      String
+  storedName    String
+  uploadedById  String
+  uploadedBy    User        @relation(fields: [uploadedById], references: [id])
+  selectedFor   Procurement? @relation("SelectedSupplier")
+  createdAt     DateTime    @default(now())
+}
+
+/** Шапка СЗ: departmentId = null — бланк управления */
+model MemoLetterhead {
+  id           String      @id @default(uuid())
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  title        String
+  body         String
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([departmentId])
+}
+
+model ProcPayment {
+  id            String            @id @default(uuid())
+  procurementId String
+  procurement   Procurement       @relation(fields: [procurementId], references: [id], onDelete: Cascade)
+  amount        Decimal?          @db.Decimal(14, 2)
+  paidAt        DateTime?
+  addressee     String
+  memoText      String?
+  note          String?
+  createdById   String?
+  createdBy     User?             @relation(fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+  files         ProcPaymentFile[]
+}
+
+model ProcPaymentFile {
+  id         String      @id @default(uuid())
+  paymentId  String
+  payment    ProcPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  fileName   String
+  storedName String
+  createdAt  DateTime    @default(now())
+}
+
+model ServiceMemo {
+  id                String        @id @default(uuid())
+  procurementId     String
+  procurement       Procurement   @relation(fields: [procurementId], references: [id], onDelete: Cascade)
+  addressee         MemoAddressee
+  addresseePosition String?
+  addresseePositionDative String?
+  addresseeFullName String?
+  addresseeShortName String?
+  addresseeDative   String?
+  fromUserId        String
+  fromUser       User          @relation("MemoFrom", fields: [fromUserId], references: [id])
+  agreedUserId   String?
+  agreedUser     User?         @relation("MemoAgreed", fields: [agreedUserId], references: [id])
+  agreedPosition String
+  agreedFullName String
+  compiledById   String
+  compiledBy     User          @relation("MemoCompiled", fields: [compiledById], references: [id])
+  body           String
+  letterheadKind String        @default("department")
+  createdAt      DateTime      @default(now())
+}
+
+model ProcDocument {
+  id            String      @id @default(uuid())
+  procurementId String
+  procurement   Procurement @relation(fields: [procurementId], references: [id], onDelete: Cascade)
+  code          String
+  title         String
+  present       Boolean     @default(false)
+  note          String?
+  fileName      String?
+  storedName    String?
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  kind      String    @default("info")
+  readAt    DateTime?
+  emailSent Boolean   @default(false)
+  createdAt DateTime  @default(now())
+}

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>А · Реестр — Настройки</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="side">
+    <a class="brand" href="dashboard.html">
+      <img class="brand-logo" src="logo.svg" alt="Экосистема УДХБ">
+    </a>
+    <nav class="side-nav">
+      <div class="side-label">Подсистемы</div>
+      <a class="side-link" href="dashboard.html"><span class="n">I.</span>Панель управления</a>
+      <a class="side-link" href="procurements.html"><span class="n">II.</span>Договоры<span class="cnt">19</span></a>
+      <a class="side-link" href="sed.html"><span class="n">III.</span>СЭД<span class="cnt">12</span></a>
+      <a class="side-link" href="#"><span class="n">IV.</span>Календарь</a>
+      <div class="side-label">Служба</div>
+      <a class="side-link" href="users.html"><span class="n">V.</span>Пользователи</a>
+      <a class="side-link side-link--active" href="settings.html"><span class="n">VI.</span>Настройки</a>
+    </nav>
+    <div class="side-foot">
+      <a class="sf-user" href="profile.html">
+        <span class="avatar">В</span>
+        <span class="sf-tx"><b>Вавилов Р. А.</b><span>Исполнитель · ОИиИБ</span></span>
+      </a>
+      <a class="sf-out" href="login.html" title="Выйти"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="dochead">
+      <div>
+        <p class="dochead-kicker">Служба</p>
+        <h1 class="dochead-title">Настройки</h1>
+      </div>
+      <div class="dochead-meta"><span class="meta-env">Внутренний контур</span><span class="bell">
+        <a class="bell-btn" href="notifications.html" aria-label="Уведомления"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="bell-badge">3</span></a>
+        <div class="bell-drop">
+          <div class="bell-h"><span>Уведомления · 3 новых</span><a href="notifications.html">все</a></div>
+          <a class="bell-item bell-item--new" href="#">СЭД: входящий 0241/26 от УВД — сведения по договору №14<span class="t">22.09 · 09:31</span></a>
+          <a class="bell-item bell-item--new" href="#">№18: СЗ направлена директору на подпись<span class="t">21.09 · 16:40</span></a>
+          <a class="bell-item bell-item--new" href="#">№16 «СКУД»: истёк срок приёмки<span class="t">21.09 · 11:05</span></a>
+          <a class="bell-foot" href="notifications.html">Все уведомления</a>
+        </div>
+      </span><span class="meta-user"><span class="avatar">A</span>admin</span></div>
+    </header>
+
+    <div class="page">
+      <p class="page-cap">Изменения вступают в силу <b>сразу после сохранения</b></p>
+      <div class="reglayout">
+        <div class="toc">
+          <div class="toc-title">Разделы</div>
+          <div class="toc-item toc-item--on"><span>Общие</span></div>
+          <div class="toc-item"><span>Договоры</span></div>
+          <div class="toc-item"><span>Интеграция СЭД</span></div>
+          <div class="toc-item"><span>Уведомления</span></div>
+          <div class="toc-item"><span>Журнал действий</span></div>
+        </div>
+
+        <div>
+          <section class="sec">
+            <div class="sec-head"><h2 class="sec-title">Бренд интерфейса</h2></div>
+            <div class="f-row">
+              <div class="f-label">Название организации</div>
+              <input class="f-input" style="width:100%" value="Управление делами хозяйственного блока">
+            </div>
+            <div class="f-row">
+              <div class="f-label">Краткое обозначение</div>
+              <input class="f-input" style="width:200px" value="УДХБ">
+            </div>
+            <div class="note" style="max-width:560px;margin-bottom:20px">Отображается в шапке всех страниц и в выгрузках Excel.</div>
+          </section>
+
+          <section class="sec">
+            <div class="sec-head"><h2 class="sec-title">Подписанты служебной записки</h2></div>
+            <div class="kv" style="max-width:560px">
+              <div class="k">Согласует</div><div class="v">Корнилова И. П. — начальник отдела</div>
+              <div class="k">Подписывает</div><div class="v">Директор УДХБ</div>
+            </div>
+          </section>
+
+          <button class="btn btn--gold">Сохранить изменения</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,16 @@
+[Unit]
+Description=UDHB Ecosys API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ecosys/apps/api
+EnvironmentFile=/opt/ecosys/.env
+Environment=TZ=Asia/Omsk
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
