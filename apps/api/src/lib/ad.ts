@@ -433,6 +433,19 @@ export async function getAdStatus() {
 /** Массовая синхронизация всех AD-пользователей */
 export async function syncAllAdUsers() {
   const users = await prisma.user.findMany({ where: { source: "ad" }, select: { id: true, login: true } });
+  return syncAdUserList(users);
+}
+
+/** Синхронизация выбранных AD-пользователей */
+export async function syncAdUsersByIds(ids: string[]) {
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids }, source: "ad" },
+    select: { id: true, login: true },
+  });
+  return syncAdUserList(users);
+}
+
+async function syncAdUserList(users: { id: string; login: string }[]) {
   let synced = 0;
   let failed = 0;
   const errors: string[] = [];

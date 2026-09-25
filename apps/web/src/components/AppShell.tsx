@@ -79,10 +79,15 @@ export function AppShell({ me, can, onLogout, children }: Props) {
 
   return (
     <div className="shell">
-      {/* ===== Сайдбар — как в макете .side ===== */}
       <aside className="side">
         <NavLink to="/" end className="brand" aria-label={`${DEFAULT_BRAND_APP_NAME} ${brandOrgName}`}>
-          <Logo orgName={brandOrgName} />
+          <span className="brand-mark" aria-hidden>
+            <Logo markOnly />
+          </span>
+          <span className="brand-text">
+            <span className="brand-org">{brandOrgName}</span>
+            <span className="brand-app">{DEFAULT_BRAND_APP_NAME}</span>
+          </span>
         </NavLink>
 
         <nav className="side-nav">
@@ -134,17 +139,22 @@ export function AppShell({ me, can, onLogout, children }: Props) {
         </div>
       </aside>
 
-      {/* ===== Контент — как в макете .main ===== */}
       <div className="main">
         <header className="dochead">
-          <div>
+          <div className="dochead-main">
             <p className="dochead-kicker">{topbarKicker}</p>
             <h1 className="dochead-title">{pageTitle}</h1>
           </div>
           <div className="dochead-meta">
-            <span className="meta-env">Внутренний контур</span>
+            <span className="meta-env" title="Контур доступа">
+              Внутренний контур
+            </span>
             <span className="bell">
-              <NavLink to="/notifications" className="bell-btn" aria-label={me.unread > 0 ? `Уведомления, ${me.unread} новых` : "Уведомления"}>
+              <NavLink
+                to="/notifications"
+                className="bell-btn"
+                aria-label={me.unread > 0 ? `Уведомления, ${me.unread} новых` : "Уведомления"}
+              >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
                   <path d="M13.7 21a2 2 0 0 1-3.4 0" />
@@ -152,28 +162,35 @@ export function AppShell({ me, can, onLogout, children }: Props) {
                 {me.unread > 0 && <span className="bell-badge">{me.unread}</span>}
               </NavLink>
               <div className="bell-drop">
-                <div className="bell-h">
-                  <span>Уведомления{me.unread > 0 ? ` · ${me.unread} новых` : ""}</span>
-                  <NavLink to="/notifications">все</NavLink>
-                </div>
-                {notes.length === 0 && <div className="bell-item">Новых уведомлений нет</div>}
-                {notes.map((n) => (
-                  <NavLink
-                    key={n.id}
-                    to="/notifications"
-                    className={`bell-item${!n.readAt ? " bell-item--new" : ""}`}
-                  >
-                    {n.title}: {n.body.length > 60 ? `${n.body.slice(0, 57)}…` : n.body}
-                    <span className="t">{fmtNoteTime(n.createdAt)}</span>
+                <div className="bell-drop-panel">
+                  <div className="bell-h">
+                    <span>Уведомления{me.unread > 0 ? ` · ${me.unread} новых` : ""}</span>
+                    <NavLink to="/notifications">все</NavLink>
+                  </div>
+                  {notes.length === 0 && <div className="bell-item">Новых уведомлений нет</div>}
+                  {notes.map((n) => (
+                    <NavLink
+                      key={n.id}
+                      to="/notifications"
+                      className={`bell-item${!n.readAt ? " bell-item--new" : ""}`}
+                    >
+                      {n.title}: {n.body.length > 60 ? `${n.body.slice(0, 57)}…` : n.body}
+                      <span className="t">{fmtNoteTime(n.createdAt)}</span>
+                    </NavLink>
+                  ))}
+                  <NavLink to="/notifications" className="bell-foot">
+                    Все уведомления
                   </NavLink>
-                ))}
-                <NavLink to="/notifications" className="bell-foot">Все уведомления</NavLink>
+                </div>
               </div>
             </span>
-            <span className="meta-user">
+            <NavLink to="/profile" className="meta-user" title="Профиль">
               <span className="avatar">{initials(me.user.fullName)}</span>
-              {me.user.login}
-            </span>
+              <span className="meta-user-tx">
+                <b>{me.user.fullName}</b>
+                <span>{me.user.login}</span>
+              </span>
+            </NavLink>
           </div>
         </header>
         <main className="shell-content">{children}</main>

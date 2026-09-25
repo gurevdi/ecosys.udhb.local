@@ -24,7 +24,8 @@ scp -r "$Root\apps\web\dist" "${Remote}/apps/web/"
 if ($LASTEXITCODE -ne 0) { throw "scp web failed" }
 
 Write-Host "`n[3/4] Migrate + restart on server..." -ForegroundColor Yellow
-$remoteCmd = "cp /opt/ecosys/deploy/ecosys-api.service /etc/systemd/system/ecosys-api.service && systemctl daemon-reload && set -a && . /opt/ecosys/.env && set +a && cd /opt/ecosys/apps/api && npm install --omit=dev && npx prisma generate && npx prisma migrate deploy && npm run seed && systemctl restart ecosys-api && sleep 2"
+# scp с Windows часто оставляет dist как 700 — nginx (www-data) тогда отдаёт 403
+$remoteCmd = "chown -R root:www-data /opt/ecosys/apps/web/dist && find /opt/ecosys/apps/web/dist -type d -exec chmod 755 {} \; && find /opt/ecosys/apps/web/dist -type f -exec chmod 644 {} \; && cp /opt/ecosys/deploy/ecosys-api.service /etc/systemd/system/ecosys-api.service && systemctl daemon-reload && set -a && . /opt/ecosys/.env && set +a && cd /opt/ecosys/apps/api && npm install --omit=dev && npx prisma generate && npx prisma migrate deploy && npm run seed && systemctl restart ecosys-api && sleep 2"
 ssh ecosys $remoteCmd
 if ($LASTEXITCODE -ne 0) { throw "remote deploy failed" }
 

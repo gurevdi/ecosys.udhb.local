@@ -114,6 +114,8 @@ model User {
   notifications   Notification[]
   procChangeLogs  ProcChangeLog[]
   paymentsCreated ProcPayment[]
+  accessLogsTarget UserAccessLog[] @relation("AccessLogTarget")
+  accessLogsActor  UserAccessLog[] @relation("AccessLogActor")
 }
 
 /** Маппинг группы AD → права и роли в экосистеме */
@@ -139,6 +141,21 @@ model UserPermission {
   canWrite Boolean @default(false)
 
   @@unique([userId, resource])
+}
+
+/** Журнал изменений доступа пользователя */
+model UserAccessLog {
+  id         String   @id @default(uuid())
+  targetId   String
+  target     User     @relation("AccessLogTarget", fields: [targetId], references: [id], onDelete: Cascade)
+  actorId    String
+  actor      User     @relation("AccessLogActor", fields: [actorId], references: [id], onDelete: Restrict)
+  action     String
+  summary    String
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([targetId, createdAt(sort: Desc)])
 }
 
 model Setting {

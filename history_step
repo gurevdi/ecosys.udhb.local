@@ -11,7 +11,8 @@
 |---|---|
 | Проект (локально) | `C:\Users\vra\ecosys.udhb.local` — основная рабочая копия для сборки и деплоя |
 | Зеркало на сетевом диске | `Z:\udhb\ecosys.udhb.local` — синхронизируется с C: (robocopy), Cursor Read/Write на Z: может давать Permission denied |
-| Сервер | `94.137.47.86:35222`, SSH alias `ecosys`, user `root` |
+| Сервер | внутр. `10.192.1.10:22` / публ. `94.137.47.86:35222`, SSH alias `ecosys`, user `root` |
+| SSH с ПК | через HTTP-прокси `gate.udhb.local:8080` (`ProxyCommand` + Git `connect.exe`), ключ `~/.ssh/id_ed25519_ecosys` |
 | Каталог на сервере | `/opt/ecosys` |
 | API | systemd `ecosys-api`, порт 3000, nginx прокси `/api` |
 | Frontend | `/opt/ecosys/apps/web/dist` |
@@ -35,9 +36,9 @@
 
 ---
 
-## Текущее состояние (21.09.2026 ~10:15 UTC+6)
+## Текущее состояние (25.09.2026 ~08:50 UTC+6)
 
-Локальная копия `C:\Users\Hack\Desktop\ecosys.udhb.local-master`: API :3000 health OK, Vite :5173. Чеклист Правки.txt 1–19 (кроме пропусков 2 и 6) повторно сверен по коду, HTTP и UI. Продакшен не деплоился. Выкладка: `ГАЙД-ДЕПЛОЙ-ДЛЯ-ЗАКАЗЧИКА.md`. Подробности инфраструктуры ниже сохранены с 01.09.
+Прод: health OK. Карточка закупки облегчена: без stats/заглушек, один CTA, компактный прогресс. SSH через `gate.udhb.local:8080`.
 
 ## Текущее состояние — инфраструктура (01.09.2026)
 
@@ -888,3 +889,104 @@ scp -r ${R}/apps/web/src/* $P\apps\web\src\
 
 ### 2026-09-22 21:30 — Push в github.com/gurevdi/ecosys.udhb.local
 - Что сделано: добавлен remote `gurevdi` → https://github.com/gurevdi/ecosys.udhb.local.git, `main` запушена. Remote `origin` (ravavilov) оставлен — два ремота, синхронизирую оба.
+
+
+### 2026-09-24 15:40 — Деплой на прод + fix миграции pravki_contracts
+- Что сделано:
+  - SSH-ключ `id_ed25519_ecosys`, конфиг `Host ecosys` через прокси `gate.udhb.local:8080`
+  - `sync-server.ps1`: фронт+API залиты; миграция `20260918120000_pravki_contracts` сначала упала (колонка `acceptanceDays` уже есть)
+  - из SQL убран `ADD COLUMN acceptanceDays`; `migrate resolve --rolled-back` → `migrate deploy` (pravki + proc_document_files + contract_kind_comment)
+  - с сервера scp в локаль недостающих миграций (memo_blank_fields … skip_published_stage)
+  - seed + restart API
+- Файлы: `apps/api/prisma/migrations/20260918120000_pravki_contracts/migration.sql`, `~/.ssh/config`, `~/.ssh/id_ed25519_ecosys`
+- Деплой: да
+- Состояние сервера: health OK, schema up to date, ecosys-api active
+- Заметки: перед следующим деплоем снова сверять список миграций локаль↔сервер; не добавлять колонки, уже введённые более ранними прод-миграциями
+
+
+### 2026-09-24 15:42 — Fix nginx: dist Permission denied после scp
+- Что сделано: `apps/web/dist` после деплоя был `drwx------` — www-data не читал index.html (в логах 403 / Permission denied). Выставлены `755/644` + `root:www-data`. В `sync-server.ps1` добавлен chmod после заливки.
+- Файлы: `deploy/sync-server.ps1`
+- Деплой: права поправлены на сервере
+- Состояние сервера: `GET /` → 200, `/api/health` OK
+- Заметки: при «битой» главной сначала `namei -l /opt/ecosys/apps/web/dist/index.html`
+
+
+### 2026-09-24 15:45 — Компактный логотип
+- Что сделано: переработан SVG Logo (viewBox 40px вместо 64), сайдбар `.brand` 56×32px (было 72×46), логин 148px (было 196), превью в настройках 32px.
+- Файлы: `apps/web/src/components/Logo.tsx`, `apps/web/src/styles.css`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5
+
+
+### 2026-09-24 15:48 — Fix hover меню уведомлений
+- Что сделано: убран зазор между колоколом и dropdown (`top:44px` при кнопке 36px) — курсор терял `:hover`. Добавлен padding-мостик + `bell-drop-panel`, `:focus-within`.
+- Файлы: `apps/web/src/styles.css`, `apps/web/src/components/AppShell.tsx`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5
+
+
+### 2026-09-24 16:00 — Переработка страницы «Пользователи» (фаза 1)
+- Что сделано:
+  - API `GET /api/users`: фильтры `departmentId`, `adDisabled`; `PATCH`: запрет самоблокировки / снятия admin у себя
+  - `GET /api/directory/search`: `existingLogins` для метки «уже в экосистеме»
+  - Список: стили `.users-*`, debounce-поиск, чипы (вкл. откл. в AD), loading/empty, клик по строке, бейджи доступа, модалка создания
+  - UserEditModal: секции Профиль/AD/Доступ, пароль для local, пресеты ролей, refresh после sync AD
+  - AD-каталог: already-imported, отключённые с чекбоксом и confirm
+- Файлы: `routes.ts`, `routes/ad.ts`, `Users.tsx`, `UserEditModal.tsx`, `UsersAdCatalogPanel.tsx`, `App.tsx`, `styles.css`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5; фаза 2 — пагинация, массовые действия, журнал прав
+
+
+### 2026-09-24 16:30 — Пользователи фаза 2: пагинация, bulk, CSV, журнал
+- Что сделано:
+  - Миграция `UserAccessLog`; `GET /api/users` → `{items,total,page,pageSize}`; `POST /api/users/bulk`; `GET /api/users/export`; `GET /api/users/:id/access-log`
+  - UI: чекбоксы, bulk-бар (активация/блок/sync AD/выдача роли), пагинация 50, CSV, история в модалке
+  - Fix: `user-access-log.ts` импорт `prisma` из `config.ts` (API падал с ERR_MODULE_NOT_FOUND)
+- Файлы: `schema.prisma`, `migrations/20260924160000_user_access_log`, `user-access-log.ts`, `ad.ts`, `routes.ts`, `Users.tsx`, `UserEditModal.tsx`, `styles.css`
+- Деплой: да
+- Состояние сервера: health OK, ecosys-api active
+- Заметки: Ctrl+F5
+
+
+### 2026-09-24 16:45 — Переработка вкладки «Импорт из AD»
+- Что сделано: hero, empty-states, чипы фильтрации выдачи, выбор всех новых, клик по строке, бар импорта, раскрытие групп; после импорта остаёмся на catalog.
+- Файлы: `UsersAdCatalogPanel.tsx`, `Users.tsx`, `styles.css`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5 → `/users?tab=catalog`
+
+
+### 2026-09-24 16:48 — Fix LDAP search filter (импорт AD)
+- Что сделано: фильтр собирался как `(&&(...))` через `ACTIVE_USER_FILTER.slice(1,-1)` — ldapts падал с Missing paren. Исправлено на `(&${PERSON_USER_FILTER}(|(…)))`, добавлен поиск по `cn`, в выдачу попадают и отключённые (фильтр UI).
+- Файлы: `apps/api/src/lib/ldap.ts`
+- Деплой: да (scp + restart)
+- Состояние сервера: health OK; searchAd «Гурьев» → 1 запись
+- Заметки: повторить поиск на `/users?tab=catalog`
+
+
+### 2026-09-25 08:20 — Шапка страниц и бренд сайдбара
+- Что сделано: единая высота 64px, navy-градиент и золотая полоса снизу у `.brand` и `.dochead`; в сайдбаре mark + текст орг/«Экосистема»; в шапке страницы — kicker/title + контур + колокол + ссылка на профиль; `Logo markOnly`; адаптив (скрытие meta-env / имени на узких экранах).
+- Файлы: `AppShell.tsx`, `Logo.tsx`, `styles.css`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5
+
+
+### 2026-09-25 08:45 — Карточка закупки: фазовый UX
+- Что сделано: карточка `/procurements/:id` — рабочее место этапа: один `ProcProgress` (wf I–V + Согласовать/Далее), `ProcRequire` с deep-link, секции overview/quotes/memo/purchase/contract/execution (active/collapsed/stub + «показать все»); убраны дубли поставщика/договора/дат из старой workflow-панели; аукцион на той же оболочке; разбиение на компоненты.
+- Файлы: `Procurement.tsx`, `components/procurement/*`, `lib/proc-workflow.ts`, `styles.css`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5 на карточке договора
+
+
+### 2026-09-25 08:50 — Карточка закупки: разгрузка UI
+- Что сделано: убраны плитки stats и будущие заглушки секций; «Общие сведения» свёрнуты по умолчанию; require — один главный CTA; прогресс компактный без дублирующих подсказок; метаданные в одну строку под заголовком; ширина контента ~960px.
+- Файлы: `Procurement.tsx`, `ProcCardHeader`, `ProcProgress`, `ProcRequire`, `proc-workflow.ts`, `styles.css`
+- Деплой: да
+- Состояние сервера: health OK
+- Заметки: Ctrl+F5; «Все разделы» — полный вид

@@ -69,7 +69,7 @@ function mapEntry(entry: Record<string, unknown>): AdPerson | null {
   };
 }
 
-const ACTIVE_USER_FILTER = "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))";
+const PERSON_USER_FILTER = "(&(objectCategory=person)(objectClass=user))";
 
 async function withLdapConn<T>(
   label: string,
@@ -179,9 +179,10 @@ export async function ldapHealth(): Promise<LdapHealth> {
 export async function searchAd(query = "", limit = 200): Promise<AdPerson[]> {
   return debugTry("ldap", `searchAd q="${query}"`, async () => {
     const q = escapeLdapFilter(query.trim());
+    // Вкладываем фильтры целиком: (&(базовый)(|(поля...))) — без slice, иначе получается «(&&...)»
     const filter = q
-      ? `(&${ACTIVE_USER_FILTER.slice(1, -1)}(|(sAMAccountName=*${q}*)(displayName=*${q}*)(mail=*${q}*)))`
-      : ACTIVE_USER_FILTER;
+      ? `(&${PERSON_USER_FILTER}(|(sAMAccountName=*${q}*)(displayName=*${q}*)(cn=*${q}*)(mail=*${q}*)))`
+      : PERSON_USER_FILTER;
 
     return withLdapConn("searchAd", async (client, _url, cfg) => {
       await serviceBind(client, cfg);

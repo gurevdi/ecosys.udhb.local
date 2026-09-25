@@ -84,7 +84,7 @@ export default function App() {
           <Route path="/" element={<Cabinet />} />
           <Route path="/procurements" element={<Procurements />} />
           <Route path="/procurements/:id" element={<Procurement />} />
-          <Route path="/users" element={<Users canDirectory={can("directory")} />} />
+          <Route path="/users" element={<Users canDirectory={can("directory")} selfId={me.user.id} />} />
           <Route path="/directory" element={<Directory />} />
           <Route path="/settings" element={<Settings me={me.user} canWrite={canWrite("settings")} />} />
           <Route path="/profile" element={<Profile me={me} onSaved={refresh} can={can} />} />

@@ -23,7 +23,7 @@ ALTER TABLE "Quote" ADD CONSTRAINT "Quote_supplierId_fkey"
 ALTER TABLE "Procurement" ADD COLUMN "executorName" TEXT;
 ALTER TABLE "Procurement" ADD COLUMN "executorUserId" TEXT;
 ALTER TABLE "Procurement" ADD COLUMN "performanceDays" INTEGER;
-ALTER TABLE "Procurement" ADD COLUMN "acceptanceDays" INTEGER DEFAULT 10;
+-- acceptanceDays уже есть на проде (миграция 20260901182000_acceptance_days)
 ALTER TABLE "Procurement" ADD COLUMN "actualDeliveryAt" TIMESTAMP(3);
 ALTER TABLE "Procurement" ADD COLUMN "validUntil" TIMESTAMP(3);
 ALTER TABLE "Procurement" ADD COLUMN "fromArchive" BOOLEAN NOT NULL DEFAULT false;

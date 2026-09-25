@@ -225,7 +225,18 @@ export async function registerAdRoutes(app: FastifyInstance) {
     const limit = Math.min(Number((req.query as { limit?: string }).limit || 200), 500);
     try {
       const people = await searchAd(q, limit);
-      return { people };
+      const logins = [...new Set(people.map((p) => p.login))];
+      const existing =
+        logins.length === 0
+          ? []
+          : await prisma.user.findMany({
+              where: {
+                OR: logins.map((login) => ({ login: { equals: login, mode: "insensitive" as const } })),
+              },
+              select: { login: true },
+            });
+      const existingLogins = existing.map((u) => u.login.toLowerCase());
+      return { people, existingLogins };
     } catch (e) {
       debugError("ldap", "каталог AD недоступен", e);
       reply.code(502).send(debugErrorPayload(e, "Каталог недоступен"));

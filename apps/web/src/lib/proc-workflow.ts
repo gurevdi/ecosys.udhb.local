@@ -61,14 +61,14 @@ export function isContractStage(status: string) {
 }
 
 /** Какая секция карточки активна на текущем этапе ЭМ */
-export type EshopActiveSection = "quotes" | "memo" | "approval" | "contract" | "execution";
+export type EshopActiveSection = "quotes" | "memo" | "approval" | "contract" | "execution" | "purchase";
 
 export function eshopActiveSection(status: string): EshopActiveSection | null {
   const s = normalizeProcStatus(status);
   if (s === "draft" || s === "collecting_quotes") return "quotes";
   if (s === "memo") return "memo";
-  if (s === "supervisor_approval" || s === "director_approval") return "approval";
-  if (s === "transferred" || s === "published" || s === "bidding" || s === "returned") return null;
+  if (s === "supervisor_approval" || s === "director_approval" || s === "approval") return "approval";
+  if (s === "transferred" || s === "published" || s === "bidding" || s === "returned") return "purchase";
   if (s === "contracted") return "contract";
   if (s === "execution" || s === "acceptance_window" || s === "completed") return "execution";
   return null;
@@ -76,6 +76,86 @@ export function eshopActiveSection(status: string): EshopActiveSection | null {
 
 export function showEshopSection(status: string, section: EshopActiveSection) {
   return eshopActiveSection(status) === section;
+}
+
+/** Секции карточки закупки */
+export type ProcCardSectionId = "overview" | "quotes" | "memo" | "purchase" | "contract" | "execution";
+
+export type SectionVis = "active" | "collapsed" | "stub";
+
+/** Режим показа секции: текущая развёрнута, справочные свёрнуты, остальное скрыто до «показать все» */
+export function sectionVisibility(status: string, section: ProcCardSectionId, showAll: boolean): SectionVis {
+  if (showAll) return "active";
+  const s = normalizeProcStatus(status);
+  const phase = phaseIndex(s);
+  if (phase < 0) {
+    return section === "overview" ? "collapsed" : "stub";
+  }
+
+  switch (section) {
+    case "overview":
+      return "collapsed";
+    case "quotes":
+      if (phase === 0 && (s === "draft" || s === "collecting_quotes")) return "active";
+      if (phase === 0 && s === "memo") return "collapsed";
+      return "stub";
+    case "memo":
+      if (s === "memo" || phase === 1) return "active";
+      return "stub";
+    case "purchase":
+      if (phase === 2) return "active";
+      return "stub";
+    case "contract":
+      if (phase === 3) return "active";
+      return "stub";
+    case "execution":
+      if (phase >= 4) return "active";
+      return "stub";
+    default:
+      return "stub";
+  }
+}
+
+export const SECTION_STUB_HINT: Record<ProcCardSectionId, string> = {
+  overview: "",
+  quotes: "Раздел активируется на этапе подготовки",
+  memo: "Служебная записка появится после сбора КП",
+  purchase: "Раздел активируется после согласования",
+  contract: "Раздел активируется после размещения и торгов",
+  execution: "Раздел активируется после подписания контракта: поставка, приёмка, оплата",
+};
+
+/** Куда вести из пункта «К исполнению» */
+export function checkTarget(checkId: string): { section: ProcCardSectionId; focus?: string; actionLabel?: string } {
+  const map: Record<string, { section: ProcCardSectionId; focus?: string; actionLabel?: string }> = {
+    no_quotes: { section: "quotes", focus: "quote-form", actionLabel: "добавить КП" },
+    no_memo: { section: "memo", focus: "memo-form", actionLabel: "оформить СЗ" },
+    memo_doc: { section: "overview", focus: "docs", actionLabel: "отметить в комплекте" },
+    supervisor_ok: { section: "memo", focus: "approve", actionLabel: "отметить согласование" },
+    director_ok: { section: "memo", focus: "approve", actionLabel: "отметить подпись директора" },
+    dept_note: { section: "purchase", focus: "dept-note", actionLabel: "заполнить заметку" },
+    published_at: { section: "purchase", focus: "published", actionLabel: "указать дату размещения" },
+    bidding_dates: { section: "purchase", focus: "bidding", actionLabel: "указать сроки торгов" },
+    bidding_order: { section: "purchase", focus: "bidding", actionLabel: "исправить сроки торгов" },
+    supplier: { section: "contract", focus: "supplier", actionLabel: "выбрать поставщика" },
+    contract_file: { section: "contract", focus: "contract-file", actionLabel: "загрузить договор" },
+    contract_date: { section: "contract", focus: "contract-date", actionLabel: "указать дату" },
+    delivery: { section: "contract", focus: "delivery", actionLabel: "указать срок исполнения" },
+    contract_no: { section: "contract", focus: "contract-number", actionLabel: "указать номер" },
+    contract_sum: { section: "contract", focus: "contract-amount", actionLabel: "указать сумму" },
+    acceptance_start: { section: "execution", focus: "actual-delivery", actionLabel: "зафиксировать поставку" },
+    acceptance_open: { section: "execution", actionLabel: "к приёмке" },
+    estimate: { section: "overview", focus: "estimate", actionLabel: "указать НМЦК" },
+  };
+  return map[checkId] || { section: "overview" };
+}
+
+export const PHASE_NUMERALS = ["I", "II", "III", "IV", "V"] as const;
+
+export function phaseSubtitle(status: string, phaseIdx: number, state: "done" | "active" | "pending", statusLabel: string): string {
+  if (state === "active") return statusLabel;
+  if (state === "done") return "завершён";
+  return "—";
 }
 
 export const ESHOP_FLOW = [

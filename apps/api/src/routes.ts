@@ -11,7 +11,8 @@ import {
   setSession,
   signToken,
 } from "./lib/auth.ts";
-import { authenticateDomainLogin } from "./lib/ad.ts";
+import { authenticateDomainLogin, syncAdUsersByIds } from "./lib/ad.ts";
+import { logUserAccess, summarizePerms, summarizeRoles } from "./lib/user-access-log.ts";
 import { notify, notifyMany } from "./lib/notify.ts";
 import { debugError, debugLog, debugTry, debugErrorPayload } from "./lib/debug.ts";
 import {
@@ -169,14 +170,23 @@ export async function registerRoutes(app: FastifyInstance) {
     return { total, active, ad, local, disabledAd };
   });
 
-  app.get("/api/users", async (req, reply) => {
-    const user = await requirePerm(req, reply, "users", false);
-    if (!user) return;
-    const query = req.query as { q?: string; source?: string; active?: string };
+  function buildUsersWhere(query: {
+    q?: string;
+    source?: string;
+    active?: string;
+    departmentId?: string;
+    adDisabled?: string;
+  }) {
     const where: Record<string, unknown> = {};
-    if (query.source === "ad" || query.source === "local") where.source = query.source;
+    if (query.adDisabled === "1" || query.adDisabled === "true") {
+      where.source = "ad";
+      where.adAccountDisabled = true;
+    } else if (query.source === "ad" || query.source === "local") {
+      where.source = query.source;
+    }
     if (query.active === "true") where.isActive = true;
     if (query.active === "false") where.isActive = false;
+    if (query.departmentId?.trim()) where.departmentId = query.departmentId.trim();
     if (query.q?.trim()) {
       const q = query.q.trim();
       where.OR = [
@@ -186,11 +196,179 @@ export async function registerRoutes(app: FastifyInstance) {
         { position: { contains: q, mode: "insensitive" } },
       ];
     }
-    return prisma.user.findMany({
+    return where;
+  }
+
+  app.get("/api/users", async (req, reply) => {
+    const user = await requirePerm(req, reply, "users", false);
+    if (!user) return;
+    const query = req.query as {
+      q?: string;
+      source?: string;
+      active?: string;
+      departmentId?: string;
+      adDisabled?: string;
+      page?: string;
+      pageSize?: string;
+    };
+    const where = buildUsersWhere(query);
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(10, Number(query.pageSize) || 50));
+    const [total, items] = await Promise.all([
+      prisma.user.count({ where }),
+      prisma.user.findMany({
+        where,
+        orderBy: { fullName: "asc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { department: true, permissions: true, contractRoles: true },
+      }),
+    ]);
+    return { items, total, page, pageSize };
+  });
+
+  app.get("/api/users/export", async (req, reply) => {
+    const user = await requirePerm(req, reply, "users", false);
+    if (!user) return;
+    const query = req.query as {
+      q?: string;
+      source?: string;
+      active?: string;
+      departmentId?: string;
+      adDisabled?: string;
+    };
+    const where = buildUsersWhere(query);
+    const rows = await prisma.user.findMany({
       where,
       orderBy: { fullName: "asc" },
+      take: 5000,
       include: { department: true, permissions: true, contractRoles: true },
     });
+    const esc = (v: string | null | undefined) => {
+      const s = v ?? "";
+      if (/[;"\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = ["login", "fullName", "email", "position", "department", "source", "isActive", "isAdmin", "roles"].join(";");
+    const lines = rows.map((u) =>
+      [
+        esc(u.login),
+        esc(u.fullName),
+        esc(u.email),
+        esc(u.position),
+        esc(u.department?.name),
+        esc(u.source),
+        u.isActive ? "1" : "0",
+        u.isAdmin ? "1" : "0",
+        esc(summarizeRoles(u.contractRoles)),
+      ].join(";")
+    );
+    const csv = "\uFEFF" + [header, ...lines].join("\n");
+    reply.header("Content-Type", "text/csv; charset=utf-8");
+    reply.header("Content-Disposition", 'attachment; filename="users.csv"');
+    return csv;
+  });
+
+  app.post("/api/users/bulk", async (req, reply) => {
+    const actor = await requirePerm(req, reply, "users", true);
+    if (!actor) return;
+    const body = z
+      .object({
+        ids: z.array(z.string()).min(1).max(200),
+        action: z.enum(["activate", "deactivate", "syncAd", "addContractRole"]),
+        role: z.enum(["admin", "moderator", "operator", "auditor"]).optional(),
+        departmentId: z.string().nullable().optional(),
+      })
+      .parse(req.body);
+
+    const ids = [...new Set(body.ids)].filter((id) => id !== actor.id || body.action === "syncAd" || body.action === "addContractRole");
+    if (body.action === "deactivate") {
+      const filtered = body.ids.filter((id) => id !== actor.id);
+      if (!filtered.length) {
+        reply.code(400).send({ error: "Нельзя заблокировать собственную учётную запись" });
+        return;
+      }
+      const r = await prisma.user.updateMany({ where: { id: { in: filtered } }, data: { isActive: false } });
+      for (const id of filtered) {
+        await logUserAccess({
+          targetId: id,
+          actorId: actor.id,
+          action: "bulk_deactivate",
+          summary: "Массовая блокировка",
+        });
+      }
+      return { ok: true, affected: r.count };
+    }
+    if (body.action === "activate") {
+      const r = await prisma.user.updateMany({ where: { id: { in: body.ids } }, data: { isActive: true } });
+      for (const id of body.ids) {
+        await logUserAccess({
+          targetId: id,
+          actorId: actor.id,
+          action: "bulk_activate",
+          summary: "Массовая активация",
+        });
+      }
+      return { ok: true, affected: r.count };
+    }
+    if (body.action === "syncAd") {
+      const result = await syncAdUsersByIds(body.ids);
+      for (const id of body.ids) {
+        await logUserAccess({
+          targetId: id,
+          actorId: actor.id,
+          action: "bulk_sync_ad",
+          summary: "Массовая синхронизация AD",
+        });
+      }
+      return result;
+    }
+    if (body.action === "addContractRole") {
+      if (!body.role) {
+        reply.code(400).send({ error: "Укажите роль" });
+        return;
+      }
+      let affected = 0;
+      for (const id of body.ids) {
+        const scopeKey = body.departmentId || "";
+        const exists = await prisma.userContractRole.findFirst({
+          where: { userId: id, role: body.role, scopeKey },
+        });
+        if (exists) continue;
+        await prisma.userContractRole.create({
+          data: {
+            userId: id,
+            role: body.role,
+            departmentId: body.departmentId || null,
+            scopeKey,
+          },
+        });
+        await logUserAccess({
+          targetId: id,
+          actorId: actor.id,
+          action: "bulk_add_role",
+          summary: `Добавлена роль ${body.role}${body.departmentId ? " (отдел)" : " (все отделы)"}`,
+          details: { role: body.role, departmentId: body.departmentId || null },
+        });
+        affected++;
+      }
+      return { ok: true, affected };
+    }
+    void ids;
+    reply.code(400).send({ error: "Неизвестное действие" });
+  });
+
+  app.get("/api/users/:id/access-log", async (req, reply) => {
+    const actor = await requirePerm(req, reply, "users", false);
+    if (!actor) return;
+    const { id } = req.params as { id: string };
+    const rows = await prisma.userAccessLog.findMany({
+      where: { targetId: id },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: { actor: { select: { id: true, login: true, fullName: true } } },
+    });
+    return rows;
   });
 
   app.get("/api/users/brief", async (req, reply) => {
@@ -239,6 +417,12 @@ export async function registerRoutes(app: FastifyInstance) {
       },
       include: { permissions: true, department: true },
     });
+    await logUserAccess({
+      targetId: created.id,
+      actorId: actor.id,
+      action: "create",
+      summary: `Создан пользователь ${created.login}`,
+    });
     return created;
   });
 
@@ -278,6 +462,26 @@ export async function registerRoutes(app: FastifyInstance) {
       reply.code(403).send({ error: "Назначать администратора может только администратор" });
       return;
     }
+    if (actor.id === id) {
+      if (body.isActive === false) {
+        reply.code(403).send({ error: "Нельзя заблокировать собственную учётную запись" });
+        return;
+      }
+      if (body.isAdmin === false) {
+        reply.code(403).send({ error: "Нельзя снять с себя права администратора" });
+        return;
+      }
+    }
+
+    const before = await prisma.user.findUnique({
+      where: { id },
+      include: { permissions: true, contractRoles: true },
+    });
+    if (!before) {
+      reply.code(404).send({ error: "Пользователь не найден" });
+      return;
+    }
+
     const data: Record<string, unknown> = {};
     for (const k of ["fullName", "email", "position", "departmentId", "isActive", "isAdmin"] as const) {
       if (body[k] !== undefined) data[k] = body[k];
@@ -302,6 +506,41 @@ export async function registerRoutes(app: FastifyInstance) {
         });
       }
     }
+
+    const changes: string[] = [];
+    if (body.isActive !== undefined && body.isActive !== before.isActive) {
+      changes.push(body.isActive ? "активирован" : "заблокирован");
+    }
+    if (body.isAdmin !== undefined && body.isAdmin !== before.isAdmin) {
+      changes.push(body.isAdmin ? "назначен admin" : "снят admin");
+    }
+    if (body.departmentId !== undefined && body.departmentId !== before.departmentId) {
+      changes.push("изменён отдел");
+    }
+    if (body.fullName !== undefined && body.fullName !== before.fullName) changes.push("ФИО");
+    if (body.email !== undefined && body.email !== before.email) changes.push("почта");
+    if (body.position !== undefined && body.position !== before.position) changes.push("должность");
+    if (body.password) changes.push("пароль");
+    if (body.permissions) {
+      const prev = summarizePerms(before.permissions);
+      const next = summarizePerms(body.permissions);
+      if (prev !== next) changes.push("права сервисов");
+    }
+    if (body.contractRoles !== undefined) {
+      const prev = summarizeRoles(before.contractRoles);
+      const next = summarizeRoles(body.contractRoles.map((r) => ({ role: r.role, departmentId: r.departmentId ?? null })));
+      if (prev !== next) changes.push("роли договоров");
+    }
+    if (changes.length) {
+      await logUserAccess({
+        targetId: id,
+        actorId: actor.id,
+        action: "update",
+        summary: changes.join(", "),
+        details: { changes },
+      });
+    }
+
     return prisma.user.findUnique({
       where: { id: updated.id },
       include: { permissions: true, department: true, contractRoles: true },
